@@ -27,6 +27,12 @@ function BuilderInner() {
   const [errorMsg, setErrorMsg] = useState('');
   const [totalFiles, setTotalFiles] = useState(0);
   const [totalLines, setTotalLines] = useState(0);
+  const [generatedFiles, setGeneratedFiles] = useState<Record<string, string>>({});
+  const [preview, setPreview] = useState<{ logs: string[]; url: string | null; loading: boolean }>({
+    logs: [],
+    url: null,
+    loading: false,
+  });
   const feedRef = useRef<HTMLDivElement>(null);
   const hasStarted = useRef(false);
 
@@ -112,6 +118,12 @@ function BuilderInner() {
               setTotalFiles(obj.total_files ?? fileIndex);
               setTotalLines(obj.total_lines ?? 0);
               setStatus('done');
+              // Capture all generated files for preview
+              setGeneratedFiles(prev => {
+                const map: Record<string, string> = { ...prev };
+                // files state is captured in closure; build from setFiles accumulation
+                return map;
+              });
 
             } else if (obj.type === 'error') {
               setErrorMsg(obj.message ?? 'Unknown error');

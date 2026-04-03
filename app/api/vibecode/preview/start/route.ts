@@ -1,124 +1,143 @@
-/**
- * VibeCode Preview Start API
- * Starts a preview server for generated code
- */
-
+import { NextRequest } from 'next/server';
 import { spawn } from 'child_process';
-import fs from 'fs/promises';
-import path from 'path';
-import { NextRequest, NextResponse } from 'next/server';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 
-// Store active preview processes in memory
-const activePreviewProcesses = new Map<string, any>();
+export const dynamic = 'force-dynamic';
+export const maxDuration = 60;
+
+function randomPort() {
+  return Math.floor(Math.random() * 999) + 3001;
+}
 
 export async function POST(req: NextRequest) {
-  try {
-    const { projectId, files } = await req.json();
+  const { files } = (await req.json()) as { files: Record<string, string> };
 
-    if (!projectId || !files || files.length === 0) {
-      return NextResponse.json(
-        { ok: false, error: 'Missing projectId or files' },
-        { status: 400 }
-      );
-    }
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'vibe-preview-'));
 
-    // Stop existing preview if running
-    if (activePreviewProcesses.has(projectId)) {
-      const existingProcess = activePreviewProcesses.get(projectId);
-      existingProcess.kill();
-      activePreviewProcesses.delete(projectId);
-    }
+  // Write all files
+  for (const [filename, content] of Object.entries(files)) {
+    const fullPath = path.join(tmpDir, filename);
+    fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+    fs.writeFileSync(fullPath, content, 'utf8');
+  }
 
-    // Create temp directory for preview
-    const previewDir = path.join(process.cwd(), '.vibecode-preview', projectId);
-    await fs.mkdir(previewDir, { recursive: true });
+  // Write package.json if not provided
+  if (!files['package.json']) {
+    const pkg = {
+      name: 'vibe-preview',
+      version: '0.1.0',
+      private: true,
+      scripts: { dev: 'next dev', build: 'next build', start: 'next start' },
+      dependencies: { next: '14.2.3', react: '^18', 'react-dom': '^18' },
+      devDependencies: {
+        typescript: '^5',
+        '@types/node': '^20',
+        '@types/react': '^18',
+        '@types/react-dom': '^18',
+      },
+    };
+    fs.writeFileSync(path.join(tmpDir, 'package.json'), JSON.stringify(pkg, null, 2));
+  }
 
-    // Write all files to preview directory
-    for (const file of files) {
-      const filePath = path.join(previewDir, file.path);
-      const fileDir = path.dirname(filePath);
-      await fs.mkdir(fileDir, { recursive: true });
-      await fs.writeFile(filePath, file.content, 'utf-8');
-    }
-
-    // Write package.json if not provided
-    const packageJsonPath = path.join(previewDir, 'package.json');
-    try {
-      await fs.access(packageJsonPath);
-    } catch {
-      await fs.writeFile(
-        packageJsonPath,
-        JSON.stringify(
-          {
-            name: `vibecode-preview-${projectId}`,
-            version: '0.1.0',
-            private: true,
-            scripts: {
-              dev: 'next dev -p 3001',
-              build: 'next build',
-              start: 'next start',
-            },
-            dependencies: {
-              next: '14.2.0',
-              react: '^18',
-              'react-dom': '^18',
-            },
-          },
-          null,
-          2
-        ),
-        'utf-8'
-      );
-    }
-
-    // Start preview server on port 3001
-    const previewProcess = spawn('npm', ['run', 'dev'], {
-      cwd: previewDir,
-      shell: true,
-      detached: false,
-    });
-
-    activePreviewProcesses.set(projectId, previewProcess);
-
-    let previewUrl = 'http://localhost:3001';
-    let logBuffer: string[] = [];
-
-    // Capture stdout
-    previewProcess.stdout?.on('data', (data) => {
-      const output = data.toString();
-      logBuffer.push(output);
-      // console.log(`[Preview ${projectId}] ${output}`);
-
-      // Detect when server is ready
-      if (output.includes('ready')) {
-        previewUrl = output.match(/http:\/\/localhost:\d+/)?.[0] || previewUrl;
-      }
-    });
-
-    // Capture stderr
-    previewProcess.stderr?.on('data', (data) => {
-      const output = data.toString();
-      logBuffer.push(output);
-      // console.error(`[Preview ${projectId}] ${output}`);
-    });
-
-    // Handle process exit
-    previewProcess.on('exit', (code) => {
-      // console.log(`Preview process ${projectId} exited with code ${code}`);
-      activePreviewProcesses.delete(projectId);
-    });
-
-    return NextResponse.json({
-      ok: true,
-      previewUrl,
-      projectId,
-      message: 'Preview server starting...',
-    });
-  } catch (error: any) {
-    console.error('Preview start error:', error);
-    return NextResponse.json(
-      { ok: false, error: error.message || 'Failed to start preview' },
-      { status: 500 }
+  // Write next.config.js if not provided
+  if (!files['next.config.js'] && !files['next.config.mjs']) {
+    fs.writeFileSync(
+      path.join(tmpDir, 'next.config.js'),
+      `/** @type {import('next').NextConfig} */\nconst nextConfig = {}\nmodule.exports = nextConfig\n`
     );
   }
+
+  const port = randomPort();
+
+  const encoder = new TextEncoder();
+  const stream = new ReadableStream({
+    start(controller) {
+      const send = (data: object) => {
+        controller.enqueue(encoder.encode(`data: ${JSON.stringify(data)}\n\n`));
+      };
+
+      send({ type: 'log', message: `📁 Created temp dir: ${tmpDir}` });
+      send({ type: 'log', message: `📦 Installing dependencies...` });
+
+      const install = spawn('npm', ['install'], { cwd: tmpDir, shell: true });
+
+      install.stdout.on('data', (d: Buffer) => {
+        const msg = d.toString().trim();
+        if (msg) send({ type: 'log', message: msg });
+      });
+      install.stderr.on('data', (d: Buffer) => {
+        const msg = d.toString().trim();
+        if (msg) send({ type: 'log', message: msg });
+      });
+
+      install.on('close', (code: number) => {
+        if (code !== 0) {
+          send({ type: 'error', message: `npm install failed with code ${code}` });
+          controller.close();
+          return;
+        }
+
+        send({ type: 'log', message: `🚀 Starting Next.js dev server on port ${port}...` });
+
+        const dev = spawn('npx', ['next', 'dev', '--port', String(port)], {
+          cwd: tmpDir,
+          shell: true,
+          env: { ...process.env, PORT: String(port) },
+        });
+
+        let ready = false;
+
+        const handleOutput = (d: Buffer) => {
+          const msg = d.toString().trim();
+          if (!msg) return;
+          send({ type: 'log', message: msg });
+
+          if (
+            !ready &&
+            (msg.includes('Ready') ||
+              msg.includes('Local:') ||
+              msg.includes('started server') ||
+              msg.toLowerCase().includes('ready in'))
+          ) {
+            ready = true;
+            send({ type: 'ready', port, url: `http://localhost:${port}` });
+          }
+        };
+
+        dev.stdout.on('data', handleOutput);
+        dev.stderr.on('data', handleOutput);
+
+        dev.on('close', (exitCode: number) => {
+          send({ type: 'log', message: `Dev server exited with code ${exitCode}` });
+          controller.close();
+        });
+
+        dev.on('error', (err: Error) => {
+          send({ type: 'error', message: err.message });
+          controller.close();
+        });
+
+        // Auto-kill after 10 minutes
+        setTimeout(() => {
+          dev.kill();
+          controller.close();
+        }, 10 * 60 * 1000);
+      });
+
+      install.on('error', (err: Error) => {
+        send({ type: 'error', message: err.message });
+        controller.close();
+      });
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      'Content-Type': 'text/event-stream',
+      'Cache-Control': 'no-cache',
+      Connection: 'keep-alive',
+    },
+  });
 }
