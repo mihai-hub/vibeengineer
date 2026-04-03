@@ -1,10 +1,17 @@
 @import "tailwindcss";
 
+@theme {
+  --color-accent: #7c3aed;
+  --color-accent-light: #a78bfa;
+  --color-accent-dark: #5b21b6;
+}
+
 :root {
   --background: #0a0a0f;
   --foreground: #f0f0f5;
   --accent: #7c3aed;
   --accent-light: #a78bfa;
+  --accent-dark: #5b21b6;
 }
 
 body {
@@ -24,7 +31,17 @@ body {
   animation: shimmer 2s linear infinite;
 }
 
+/* Accent button */
+.btn-accent {
+  background: linear-gradient(135deg, #7c3aed, #a21caf);
+  color: #fff;
+  border: none;
+  transition: opacity 0.15s;
+}
+.btn-accent:hover { opacity: 0.9; }
+
 /* Scrollbar */
 ::-webkit-scrollbar { width: 6px; }
 ::-webkit-scrollbar-track { background: #111; }
-::-webkit-scrollbar-thumb { background: #333; border-radius: 3px; }
+::-webkit-scrollbar-thumb { background: #7c3aed55; border-radius: 3px; }
+::-webkit-scrollbar-thumb:hover { background: #7c3aed; }
