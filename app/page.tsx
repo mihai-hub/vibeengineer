@@ -2,6 +2,7 @@
 
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
 import {
   ShoppingCart,
   BarChart3,
@@ -97,7 +98,7 @@ export default function LandingPage() {
   const handleBuild = () => {
     const text = prompt.trim();
     if (!text) return;
-    router.push(`/builder?prompt=${encodeURIComponent(text)}`);
+    router.push(`/coo?prompt=${encodeURIComponent(text)}`);
   };
 
   const handleTemplateClick = (t: typeof TEMPLATES[0]) => {
@@ -158,7 +159,7 @@ export default function LandingPage() {
         />
 
         <h1 className="relative z-10 max-w-3xl text-5xl font-extrabold leading-tight tracking-tight text-white sm:text-6xl">
-          Describe your app.{' '}
+          Meet your{' '}
           <span
             style={{
               background: 'linear-gradient(135deg, #7c3aed 0%, #a78bfa 100%)',
@@ -166,16 +167,135 @@ export default function LandingPage() {
               WebkitTextFillColor: 'transparent',
             }}
           >
-            Watch it get built.
-          </span>
+            CTO and COO
+          </span>{' '}
+          before you build.
         </h1>
 
         <p
           className="relative z-10 mt-5 max-w-xl text-lg leading-relaxed"
           style={{ color: '#9ca3af' }}
         >
-          VibeEngineer uses Claude AI to generate full-stack Next.js apps in real time.
+          VibeEngineer gives you an AI technical co-founder and operator — before you write a single line of code.
         </p>
+
+        {/* Advisor CTA Buttons */}
+        <div className="relative z-10 mt-10 flex items-center gap-4 flex-wrap justify-center">
+          <Link
+            href="/cto"
+            className="flex items-center gap-3 rounded-2xl px-6 py-4 text-sm font-semibold text-white transition-all duration-200 hover:-translate-y-0.5 hover:brightness-110"
+            style={{
+              background: 'linear-gradient(135deg, #7c3aed 0%, #3b82f6 100%)',
+              boxShadow: '0 4px 24px rgba(124,58,237,0.35)',
+            }}
+          >
+            <span className="text-lg">🧠</span>
+            Talk to the CTO
+          </Link>
+          <Link
+            href="/coo"
+            className="flex items-center gap-3 rounded-2xl px-6 py-4 text-sm font-semibold text-white transition-all duration-200 hover:-translate-y-0.5 hover:brightness-110"
+            style={{
+              background: 'linear-gradient(135deg, #f97316 0%, #ec4899 100%)',
+              boxShadow: '0 4px 24px rgba(249,115,22,0.35)',
+            }}
+          >
+            <span className="text-lg">💼</span>
+            Talk to the COO
+          </Link>
+        </div>
+      </section>
+
+      {/* Advisor Cards */}
+      <section className="mx-auto w-full max-w-4xl px-6 pb-16">
+        <h2
+          className="mb-8 text-center text-sm font-semibold uppercase tracking-widest"
+          style={{ color: '#6b7280' }}
+        >
+          Your AI co-founders
+        </h2>
+
+        <div className="grid gap-5 sm:grid-cols-2">
+          {/* CTO Card */}
+          <Link
+            href="/cto"
+            className="group flex flex-col gap-4 rounded-2xl p-6 transition-all duration-200 hover:-translate-y-1"
+            style={{
+              background: 'rgba(124,58,237,0.07)',
+              border: '1px solid rgba(124,58,237,0.25)',
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLElement).style.border = '1px solid rgba(124,58,237,0.55)';
+              (e.currentTarget as HTMLElement).style.background = 'rgba(124,58,237,0.12)';
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLElement).style.border = '1px solid rgba(124,58,237,0.25)';
+              (e.currentTarget as HTMLElement).style.background = 'rgba(124,58,237,0.07)';
+            }}
+          >
+            <div className="flex items-center gap-4">
+              <div
+                className="flex h-12 w-12 items-center justify-center rounded-2xl text-2xl"
+                style={{ background: 'linear-gradient(135deg, #7c3aed 0%, #3b82f6 100%)' }}
+              >
+                🧠
+              </div>
+              <div>
+                <p className="font-bold text-white text-base">CTO Advisor</p>
+                <p className="text-xs mt-0.5" style={{ color: '#a78bfa' }}>Stack · Architecture · Tech decisions</p>
+              </div>
+            </div>
+            <p className="text-sm leading-relaxed" style={{ color: '#9ca3af' }}>
+              &ldquo;Tell me about the app you want to build — I will help you choose the right stack and architecture.&rdquo;
+            </p>
+            <span
+              className="self-end text-xs font-medium opacity-0 transition-opacity duration-200 group-hover:opacity-100"
+              style={{ color: '#a78bfa' }}
+            >
+              Start conversation →
+            </span>
+          </Link>
+
+          {/* COO Card */}
+          <Link
+            href="/coo"
+            className="group flex flex-col gap-4 rounded-2xl p-6 transition-all duration-200 hover:-translate-y-1"
+            style={{
+              background: 'rgba(249,115,22,0.07)',
+              border: '1px solid rgba(249,115,22,0.25)',
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget as HTMLElement).style.border = '1px solid rgba(249,115,22,0.55)';
+              (e.currentTarget as HTMLElement).style.background = 'rgba(249,115,22,0.12)';
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget as HTMLElement).style.border = '1px solid rgba(249,115,22,0.25)';
+              (e.currentTarget as HTMLElement).style.background = 'rgba(249,115,22,0.07)';
+            }}
+          >
+            <div className="flex items-center gap-4">
+              <div
+                className="flex h-12 w-12 items-center justify-center rounded-2xl text-2xl"
+                style={{ background: 'linear-gradient(135deg, #f97316 0%, #ec4899 100%)' }}
+              >
+                💼
+              </div>
+              <div>
+                <p className="font-bold text-white text-base">COO Advisor</p>
+                <p className="text-xs mt-0.5" style={{ color: '#fb923c' }}>GTM · Pricing · Growth strategy</p>
+              </div>
+            </div>
+            <p className="text-sm leading-relaxed" style={{ color: '#9ca3af' }}>
+              &ldquo;What problem are you solving and who is your customer? Let me help you with positioning and pricing.&rdquo;
+            </p>
+            <span
+              className="self-end text-xs font-medium opacity-0 transition-opacity duration-200 group-hover:opacity-100"
+              style={{ color: '#fb923c' }}
+            >
+              Start conversation →
+            </span>
+          </Link>
+        </div>
       </section>
 
       {/* Template Grid */}
@@ -184,7 +304,7 @@ export default function LandingPage() {
           className="mb-8 text-center text-sm font-semibold uppercase tracking-widest"
           style={{ color: '#6b7280' }}
         >
-          Start from a template
+          Or start from a template
         </h2>
 
         <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
@@ -240,6 +360,12 @@ export default function LandingPage() {
 
       {/* Prompt Section */}
       <section id="prompt-section" className="mx-auto w-full max-w-3xl px-6 pb-24">
+        <h2
+          className="mb-6 text-center text-sm font-semibold uppercase tracking-widest"
+          style={{ color: '#6b7280' }}
+        >
+          Or describe your idea
+        </h2>
         <div
           className="rounded-3xl p-6"
           style={{
@@ -260,7 +386,7 @@ export default function LandingPage() {
 
           <div className="mt-4 flex items-center justify-between">
             <p className="text-xs" style={{ color: '#4b5563' }}>
-              ⌘ + Enter to build
+              ⌘ + Enter to send
             </p>
 
             <button
@@ -273,7 +399,7 @@ export default function LandingPage() {
               }}
             >
               <Sparkles className="h-4 w-4" />
-              Build with Claude
+              Get AI Strategy →
             </button>
           </div>
         </div>
