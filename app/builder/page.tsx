@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { Send, Loader2, CheckCircle2, Terminal, Download, AlertCircle } from 'lucide-react';
+import { Send, Loader2, CheckCircle2, Terminal, Download, AlertCircle, BrainCircuit } from 'lucide-react';
 
 /* ─── Types ──────────────────────────────────────────────────── */
 type FileEntry = {
@@ -148,18 +148,33 @@ function BuilderInner() {
   }
 
   async function handleDownloadZip() {
-    const JSZip = (await import('jszip')).default;
-    const zip = new JSZip();
-    for (const file of files) {
-      zip.file(file.path, file.content);
+    try {
+      const res = await fetch('/api/download', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          files: files.map(f => ({ path: f.path, content: f.content })),
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({ error: `HTTP ${res.status}` }));
+        throw new Error(err.error ?? `HTTP ${res.status}`);
+      }
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = 'vibeengineer-app.zip';
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+    } catch (err: unknown) {
+      const message = err instanceof Error ? err.message : String(err);
+      setErrorMsg(`Download failed: ${message}`);
     }
-    const blob = await zip.generateAsync({ type: 'blob' });
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = 'vibeengineer-app.zip';
-    a.click();
-    URL.revokeObjectURL(url);
   }
 
   function handleManualSubmit(e: React.FormEvent) {
@@ -191,7 +206,7 @@ function BuilderInner() {
             <button
               type="submit"
               disabled={!manualPrompt.trim()}
-              className="bg-white text-black px-5 py-3 rounded-lg font-semibold text-sm disabled:opacity-40 hover:bg-zinc-200 transition-colors flex items-center gap-2"
+              className="bg-violet-600 text-white px-5 py-3 rounded-lg font-semibold text-sm disabled:opacity-40 hover:bg-violet-500 transition-colors flex items-center gap-2"
             >
               <Send size={14} />
               Build
@@ -308,10 +323,24 @@ function BuilderInner() {
           <button
             onClick={handleDownloadZip}
             disabled={status !== 'done' || files.length === 0}
-            className="flex items-center gap-2 bg-white text-black px-4 py-2 rounded-md text-sm font-semibold disabled:opacity-30 hover:bg-zinc-200 transition-colors"
+            className="flex items-center gap-2 bg-violet-600 text-white px-4 py-2 rounded-md text-sm font-semibold disabled:opacity-30 hover:bg-violet-500 transition-colors"
           >
             <Download size={14} />
             Download ZIP
+          </button>
+          <button
+            onClick={() => {
+              sessionStorage.setItem(
+                'vibeFiles',
+                JSON.stringify(doneFiles.map(f => ({ path: f.path, content: f.content })))
+              );
+              router.push(`/coo?prompt=${encodeURIComponent(urlPrompt)}`);
+            }}
+            disabled={status !== 'done' || doneFiles.length === 0}
+            className="flex items-center gap-2 bg-white text-black px-4 py-2 rounded-md text-sm font-semibold disabled:opacity-30 hover:bg-zinc-200 transition-colors"
+          >
+            <BrainCircuit size={14} />
+            Talk to COO
           </button>
           {status === 'done' && (
             <span className="text-xs text-zinc-500">
