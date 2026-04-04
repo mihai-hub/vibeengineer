@@ -187,6 +187,69 @@ function BuilderInner() {
   const doneFiles = files.filter(f => f.status === 'done');
   const displayTotalLines = totalLines || doneFiles.reduce((s, f) => s + f.lines, 0);
 
+  // ── Live preview state ──
+  const [iframeSrc, setIframeSrc] = useState<string | null>(null);
+  const [patchRequest, setPatchRequest] = useState('');
+  const [patchLoading, setPatchLoading] = useState(false);
+  const [patchMsg, setPatchMsg] = useState('');
+  const iframeRef = useRef<HTMLIFrameElement>(null);
+
+  // Build blob URL from generated files whenever doneFiles changes and status is done
+  useEffect(() => {
+    if (status !== 'done' || doneFiles.length === 0) return;
+    const htmlFile = doneFiles.find(f => f.path.endsWith('.html')) ?? doneFiles[0];
+    let html = htmlFile.content;
+    // Inject CSS inline
+    doneFiles.filter(f => f.path.endsWith('.css')).forEach(f => {
+      html = html.replace('</head>', `<style>${f.content}</style></head>`);
+      if (!html.includes('</head>')) html = `<style>${f.content}</style>` + html;
+    });
+    // Inject JS inline
+    doneFiles.filter(f => f.path.endsWith('.js') && !f.path.endsWith('.min.js')).forEach(f => {
+      html = html.replace('</body>', `<script>${f.content}</script></body>`);
+      if (!html.includes('</body>')) html += `<script>${f.content}</script>`;
+    });
+    const blob = new Blob([html], { type: 'text/html' });
+    const url = URL.createObjectURL(blob);
+    setIframeSrc(prev => { if (prev) URL.revokeObjectURL(prev); return url; });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status, doneFiles.length]);
+
+  async function handleAIFix() {
+    if (!patchRequest.trim() || doneFiles.length === 0) return;
+    setPatchLoading(true);
+    setPatchMsg('');
+    try {
+      // Screenshot the iframe via Canvas API
+      let screenshot_b64 = '';
+      if (iframeRef.current?.contentDocument?.body) {
+        const { default: html2canvas } = await import('html2canvas');
+        const canvas = await html2canvas(iframeRef.current.contentDocument.body, { useCORS: true });
+        screenshot_b64 = canvas.toDataURL('image/png').split(',')[1];
+      }
+      const filesMap = Object.fromEntries(doneFiles.map(f => [f.path, f.content]));
+      const res = await fetch('/api/patch', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ screenshot_b64, request: patchRequest, files: filesMap }),
+      });
+      const { patches } = await res.json() as { patches: { path: string; content: string }[] };
+      if (patches?.length) {
+        // Apply patches to files state
+        const patchMap = Object.fromEntries(patches.map((p: { path: string; content: string }) => [p.path, p.content]));
+        setFiles(prev => prev.map(f => patchMap[f.path] ? { ...f, content: patchMap[f.path] } : f));
+        setPatchMsg(`Patched ${patches.length} file${patches.length > 1 ? 's' : ''}`);
+        setPatchRequest('');
+      } else {
+        setPatchMsg('No changes needed');
+      }
+    } catch (err: unknown) {
+      setPatchMsg(`Error: ${err instanceof Error ? err.message : String(err)}`);
+    } finally {
+      setPatchLoading(false);
+    }
+  }
+
   /* ─── No prompt: show input form ─────────────────────────────── */
   if (!urlPrompt) {
     return (
@@ -358,33 +421,51 @@ function BuilderInner() {
           <p className="text-xs text-zinc-500 uppercase tracking-widest font-mono">Preview</p>
         </div>
 
-        {/* File tree / preview area */}
-        <div className="flex-1 overflow-y-auto px-4 py-4 bg-zinc-950">
-          {files.length === 0 ? (
+        {/* Live preview iframe / placeholder */}
+        <div className="flex-1 bg-zinc-950 relative">
+          {!iframeSrc ? (
             <div className="flex flex-col items-center justify-center h-full gap-3 text-zinc-600">
               <Terminal size={32} />
-              <p className="text-sm">Files will appear here</p>
+              <p className="text-sm">{status === 'generating' ? 'Building preview…' : 'Files will appear here'}</p>
             </div>
           ) : (
-            <div className="space-y-1">
-              <p className="text-xs text-zinc-500 font-mono mb-3 uppercase tracking-widest">
-                File tree
-              </p>
-              {files.map(file => (
-                <div
-                  key={file.id}
-                  className="flex items-center gap-2 px-2 py-1 rounded hover:bg-zinc-900 transition-colors cursor-default"
-                >
-                  <span className="text-zinc-600 text-xs">📄</span>
-                  <span className="text-xs font-mono text-zinc-300 truncate">{file.path}</span>
-                </div>
-              ))}
-            </div>
+            <iframe
+              ref={iframeRef}
+              src={iframeSrc}
+              className="w-full h-full border-0"
+              sandbox="allow-scripts allow-same-origin"
+              title="Live Preview"
+            />
           )}
         </div>
 
+        {/* AI Fix bar — shown when generation is done */}
+        {status === 'done' && (
+          <div className="border-t border-zinc-800 bg-zinc-900 px-4 py-3 shrink-0">
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={patchRequest}
+                onChange={e => setPatchRequest(e.target.value)}
+                onKeyDown={e => e.key === 'Enter' && handleAIFix()}
+                placeholder="Describe what to change…"
+                className="flex-1 bg-zinc-800 text-white text-sm rounded-md px-3 py-2 outline-none border border-zinc-700 focus:border-violet-500 placeholder-zinc-500"
+              />
+              <button
+                onClick={handleAIFix}
+                disabled={patchLoading || !patchRequest.trim()}
+                className="flex items-center gap-1.5 bg-violet-600 hover:bg-violet-500 disabled:opacity-40 text-white text-sm font-semibold px-3 py-2 rounded-md transition-colors"
+              >
+                {patchLoading ? <Loader2 size={14} className="animate-spin" /> : <Send size={14} />}
+                AI Fix
+              </button>
+            </div>
+            {patchMsg && <p className="text-xs text-zinc-400 mt-1.5">{patchMsg}</p>}
+          </div>
+        )}
+
         {/* Build another */}
-        <div className="border-t border-zinc-800 bg-zinc-900 px-4 py-3 shrink-0">
+        <div className="border-t border-zinc-800 bg-zinc-900 px-4 py-2 shrink-0">
           <button
             onClick={() => router.push('/')}
             className="w-full text-sm text-zinc-400 hover:text-white transition-colors py-1"
