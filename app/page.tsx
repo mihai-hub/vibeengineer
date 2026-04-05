@@ -142,33 +142,71 @@ export default function LandingPage() {
 
       {/* Hero */}
       <section className="relative flex flex-col items-center justify-center overflow-hidden px-6 pb-20 pt-24 text-center">
+        {/* Orb 1 — main central purple glow, floating */}
         <div
           aria-hidden
           style={{
             position: 'absolute',
-            top: '0',
+            top: '-40px',
             left: '50%',
             transform: 'translateX(-50%)',
-            width: '720px',
-            height: '320px',
-            background:
-              'radial-gradient(ellipse at center, rgba(124,58,237,0.22) 0%, transparent 70%)',
+            width: '800px',
+            height: '380px',
+            background: 'radial-gradient(ellipse at center, rgba(124,58,237,0.28) 0%, rgba(124,58,237,0.08) 50%, transparent 70%)',
             pointerEvents: 'none',
             zIndex: 0,
+            animation: 'float-orb 8s ease-in-out infinite',
+          }}
+        />
+        {/* Orb 2 — blue accent, offset right */}
+        <div
+          aria-hidden
+          style={{
+            position: 'absolute',
+            top: '20px',
+            left: 'calc(50% + 180px)',
+            transform: 'translateX(-50%)',
+            width: '480px',
+            height: '280px',
+            background: 'radial-gradient(ellipse at center, rgba(96,165,250,0.18) 0%, transparent 65%)',
+            pointerEvents: 'none',
+            zIndex: 0,
+            animation: 'float-orb-2 10s ease-in-out infinite',
+          }}
+        />
+        {/* Orb 3 — pink accent, offset left */}
+        <div
+          aria-hidden
+          style={{
+            position: 'absolute',
+            top: '10px',
+            left: 'calc(50% - 180px)',
+            transform: 'translateX(-50%)',
+            width: '420px',
+            height: '240px',
+            background: 'radial-gradient(ellipse at center, rgba(236,72,153,0.13) 0%, transparent 65%)',
+            pointerEvents: 'none',
+            zIndex: 0,
+            animation: 'float-orb-2 12s ease-in-out infinite reverse',
+          }}
+        />
+        {/* Dot-grid overlay — pulses softly */}
+        <div
+          aria-hidden
+          style={{
+            position: 'absolute',
+            inset: 0,
+            backgroundImage: 'radial-gradient(circle, rgba(124,58,237,0.05) 1px, transparent 1px)',
+            backgroundSize: '40px 40px',
+            pointerEvents: 'none',
+            zIndex: 0,
+            animation: 'pulse-glow 6s ease-in-out infinite',
           }}
         />
 
         <h1 className="relative z-10 max-w-3xl text-5xl font-extrabold leading-tight tracking-tight text-white sm:text-6xl">
           Meet your{' '}
-          <span
-            style={{
-              background: 'linear-gradient(135deg, #7c3aed 0%, #a78bfa 100%)',
-              WebkitBackgroundClip: 'text',
-              WebkitTextFillColor: 'transparent',
-            }}
-          >
-            CTO and COO
-          </span>{' '}
+          <span className="hero-gradient-text">CTO and COO</span>{' '}
           before you build.
         </h1>
 
@@ -180,29 +218,46 @@ export default function LandingPage() {
         </p>
 
         {/* Advisor CTA Buttons */}
-        <div className="relative z-10 mt-10 flex items-center gap-4 flex-wrap justify-center">
-          <Link
-            href="/cto"
-            className="flex items-center gap-3 rounded-2xl px-6 py-4 text-sm font-semibold text-white transition-all duration-200 hover:-translate-y-0.5 hover:brightness-110"
+        <div className="relative z-10 mt-10 flex flex-col items-center gap-0">
+          {/* Soft glow ring behind buttons */}
+          <div
+            aria-hidden
             style={{
-              background: 'linear-gradient(135deg, #7c3aed 0%, #3b82f6 100%)',
-              boxShadow: '0 4px 24px rgba(124,58,237,0.35)',
+              position: 'absolute',
+              top: '50%',
+              left: '50%',
+              transform: 'translate(-50%, -50%)',
+              width: '440px',
+              height: '90px',
+              background: 'radial-gradient(ellipse at center, rgba(124,58,237,0.18) 0%, transparent 70%)',
+              pointerEvents: 'none',
+              filter: 'blur(8px)',
+              animation: 'pulse-glow 4s ease-in-out infinite',
             }}
-          >
-            <span className="text-lg">🧠</span>
-            Talk to the CTO
-          </Link>
-          <Link
-            href="/coo"
-            className="flex items-center gap-3 rounded-2xl px-6 py-4 text-sm font-semibold text-white transition-all duration-200 hover:-translate-y-0.5 hover:brightness-110"
-            style={{
-              background: 'linear-gradient(135deg, #f97316 0%, #ec4899 100%)',
-              boxShadow: '0 4px 24px rgba(249,115,22,0.35)',
-            }}
-          >
-            <span className="text-lg">💼</span>
-            Talk to the COO
-          </Link>
+          />
+          <div className="flex items-center gap-4 flex-wrap justify-center">
+            <Link
+              href="/cto"
+              className="hero-cta-pulse flex items-center gap-3 rounded-2xl px-6 py-4 text-sm font-semibold text-white transition-all duration-200 hover:-translate-y-0.5 hover:brightness-110"
+              style={{
+                background: 'linear-gradient(135deg, #7c3aed 0%, #3b82f6 100%)',
+              }}
+            >
+              <span className="text-lg">🧠</span>
+              Talk to the CTO
+            </Link>
+            <Link
+              href="/coo"
+              className="flex items-center gap-3 rounded-2xl px-6 py-4 text-sm font-semibold text-white transition-all duration-200 hover:-translate-y-0.5 hover:brightness-110"
+              style={{
+                background: 'linear-gradient(135deg, #f97316 0%, #ec4899 100%)',
+                boxShadow: '0 4px 24px rgba(249,115,22,0.35)',
+              }}
+            >
+              <span className="text-lg">💼</span>
+              Talk to the COO
+            </Link>
+          </div>
         </div>
       </section>
 
@@ -355,6 +410,165 @@ export default function LandingPage() {
               </button>
             );
           })}
+        </div>
+      </section>
+
+      {/* Pricing Section */}
+      <section className="mx-auto w-full max-w-5xl px-6 pb-20">
+        <h2
+          className="mb-12 text-center text-sm font-semibold uppercase tracking-widest"
+          style={{ color: '#6b7280' }}
+        >
+          Simple pricing
+        </h2>
+
+        <div className="grid gap-6 lg:grid-cols-3">
+
+          {/* FREE */}
+          <div
+            className="flex flex-col gap-6 rounded-2xl p-8"
+            style={{
+              background: 'rgba(255,255,255,0.03)',
+              border: '1px solid rgba(255,255,255,0.08)',
+            }}
+          >
+            <div>
+              <p className="text-xl font-bold text-white">Free</p>
+              <p className="mt-1 text-3xl font-extrabold text-white">
+                $0<span className="text-base font-medium" style={{ color: '#6b7280' }}> / mo</span>
+              </p>
+              <p className="mt-1 text-sm" style={{ color: '#6b7280' }}>Get started, no credit card</p>
+            </div>
+
+            <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }} className="pt-6 flex flex-col gap-3">
+              {[
+                '3 AI advisor sessions / month',
+                '2 app generations',
+                'Community templates',
+                'CTO + COO chat',
+              ].map((f) => (
+                <div key={f} className="flex items-start gap-3 text-sm" style={{ color: '#d1d5db' }}>
+                  <span style={{ color: '#6b7280', flexShrink: 0 }}>✓</span>
+                  {f}
+                </div>
+              ))}
+            </div>
+
+            <button
+              className="mt-auto w-full rounded-xl py-3 text-sm font-semibold text-white transition-all duration-200"
+              style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.15)' }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)'; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+            >
+              Start Free
+            </button>
+          </div>
+
+          {/* PRO */}
+          <div
+            className="relative flex flex-col gap-6 rounded-2xl p-8"
+            style={{
+              background: 'rgba(124,58,237,0.08)',
+              border: '1px solid rgba(124,58,237,0.45)',
+              boxShadow: '0 0 40px rgba(124,58,237,0.18)',
+            }}
+          >
+            <div
+              className="absolute -top-3 right-6 rounded-full px-3 py-1 text-xs font-semibold"
+              style={{
+                background: 'rgba(124,58,237,0.2)',
+                border: '1px solid rgba(124,58,237,0.45)',
+                color: '#a78bfa',
+              }}
+            >
+              Most Popular
+            </div>
+
+            <div>
+              <p className="text-xl font-bold text-white">Pro</p>
+              <p
+                className="mt-1 text-3xl font-extrabold"
+                style={{
+                  background: 'linear-gradient(135deg, #7c3aed 0%, #a78bfa 100%)',
+                  WebkitBackgroundClip: 'text',
+                  WebkitTextFillColor: 'transparent',
+                }}
+              >
+                $29<span
+                  className="text-base font-medium"
+                  style={{ WebkitTextFillColor: '#6b7280' }}
+                > / mo</span>
+              </p>
+              <p className="mt-1 text-sm" style={{ color: '#9ca3af' }}>For serious builders</p>
+            </div>
+
+            <div style={{ borderTop: '1px solid rgba(124,58,237,0.2)' }} className="pt-6 flex flex-col gap-3">
+              {[
+                'Unlimited advisor sessions',
+                'Unlimited app generations',
+                'Priority Claude generation',
+                'Advanced templates library',
+                'Export full source code',
+                '1-click deploy to Vercel',
+              ].map((f) => (
+                <div key={f} className="flex items-start gap-3 text-sm" style={{ color: '#d1d5db' }}>
+                  <span style={{ color: '#a78bfa', flexShrink: 0 }}>✓</span>
+                  {f}
+                </div>
+              ))}
+            </div>
+
+            <button
+              className="mt-auto w-full rounded-xl py-3 text-sm font-semibold text-white transition-all duration-200 hover:brightness-110"
+              style={{
+                background: 'linear-gradient(135deg, #7c3aed 0%, #a78bfa 100%)',
+                boxShadow: '0 4px 20px rgba(124,58,237,0.35)',
+              }}
+            >
+              Get Pro
+            </button>
+          </div>
+
+          {/* ENTERPRISE */}
+          <div
+            className="flex flex-col gap-6 rounded-2xl p-8"
+            style={{
+              background: 'rgba(255,255,255,0.03)',
+              border: '1px solid rgba(255,255,255,0.08)',
+            }}
+          >
+            <div>
+              <p className="text-xl font-bold text-white">Enterprise</p>
+              <p className="mt-1 text-3xl font-extrabold text-white">Custom</p>
+              <p className="mt-1 text-sm" style={{ color: '#6b7280' }}>For teams and agencies</p>
+            </div>
+
+            <div style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }} className="pt-6 flex flex-col gap-3">
+              {[
+                'Everything in Pro',
+                'Dedicated AI instance',
+                'Custom integrations',
+                'SLA + priority support',
+                'Team seats & permissions',
+                'White-label option',
+              ].map((f) => (
+                <div key={f} className="flex items-start gap-3 text-sm" style={{ color: '#d1d5db' }}>
+                  <span style={{ color: '#6b7280', flexShrink: 0 }}>✓</span>
+                  {f}
+                </div>
+              ))}
+            </div>
+
+            <button
+              className="mt-auto w-full rounded-xl py-3 text-sm font-semibold text-white transition-all duration-200"
+              style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.15)' }}
+              onMouseEnter={(e) => { (e.currentTarget as HTMLElement).style.background = 'rgba(255,255,255,0.06)'; }}
+              onMouseLeave={(e) => { (e.currentTarget as HTMLElement).style.background = 'transparent'; }}
+            >
+              Contact Sales
+            </button>
+          </div>
+
         </div>
       </section>
 
