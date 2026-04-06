@@ -127,16 +127,21 @@ export default function LandingPage() {
           </span>
         </div>
 
-        <div
-          className="flex items-center gap-2 rounded-full px-4 py-1.5 text-sm font-medium"
-          style={{
-            background: 'rgba(124,58,237,0.15)',
-            border: '1px solid rgba(124,58,237,0.45)',
-            color: '#a78bfa',
-          }}
-        >
-          <Sparkles className="h-3.5 w-3.5" />
-          Powered by Claude
+        <div className="flex items-center gap-3">
+          <a
+            href="/chat"
+            className="text-sm font-medium px-4 py-1.5 rounded-full transition-colors"
+            style={{ color: '#a78bfa', border: '1px solid rgba(124,58,237,0.45)', background: 'rgba(124,58,237,0.15)' }}
+          >
+            AI Chat
+          </a>
+          <a
+            href="/builder"
+            className="text-sm font-medium px-4 py-1.5 rounded-full transition-colors"
+            style={{ color: '#67e8f9', border: '1px solid rgba(6,182,212,0.45)', background: 'rgba(6,182,212,0.1)' }}
+          >
+            Builder
+          </a>
         </div>
       </header>
 
