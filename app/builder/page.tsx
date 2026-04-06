@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
 import { Send, Loader2, CheckCircle2, Terminal, Download, AlertCircle, BrainCircuit } from 'lucide-react';
+import OperatorBar from '@/components/OperatorBar';
 
 /* ─── Types ──────────────────────────────────────────────────── */
 type FileEntry = {
@@ -463,6 +464,9 @@ function BuilderInner() {
             {patchMsg && <p className="text-xs text-zinc-400 mt-1.5">{patchMsg}</p>}
           </div>
         )}
+
+        {/* AI Operator — shown when generation is done */}
+        {status === 'done' && <OperatorBar iframeRef={iframeRef} />}
 
         {/* Build another */}
         <div className="border-t border-zinc-800 bg-zinc-900 px-4 py-2 shrink-0">

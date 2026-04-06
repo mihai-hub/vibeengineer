@@ -1,4 +1,5 @@
 import Anthropic from '@anthropic-ai/sdk';
+import { validatePatch } from '@/lib/patch-guard';
 
 export async function POST(req: Request) {
   try {
@@ -58,6 +59,15 @@ export async function POST(req: Request) {
       path: string;
       content: string;
     }>;
+
+    // ── VibeClaw: safety check before returning patches ──────────
+    const guardResult = validatePatch(patches);
+    if (!guardResult.safe) {
+      return Response.json(
+        { error: guardResult.blocked, patches: [] },
+        { status: 400 }
+      );
+    }
 
     return Response.json({ patches });
   } catch (err: unknown) {

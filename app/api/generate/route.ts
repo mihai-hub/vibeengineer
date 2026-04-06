@@ -5,11 +5,12 @@
  *
  * Streams lines of:
  *   {"type":"file","path":"...","content":"...","lines":N}
- *   {"type":"done","total_files":N,"total_lines":N}
+ *   {"type":"done","total_files":N,"total_lines":N,"safety":{safe,issues}}
  *   {"type":"error","message":"..."}
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { validateCode } from '@/lib/vibe-claw';
 
 const SYSTEM_PROMPT = `You are a full-stack Next.js code generator. Generate a complete, production-ready Next.js 14 app for the user's prompt.
 
@@ -50,6 +51,8 @@ export async function POST(req: Request) {
         let buffer = '';
         let totalFiles = 0;
         let totalLines = 0;
+        // Collect generated files for safety validation
+        const generatedFiles: Record<string, string> = {};
 
         const anthropicStream = await anthropic.messages.stream({
           model: chosenModel,
@@ -91,6 +94,10 @@ export async function POST(req: Request) {
                 if (obj.type === 'file') {
                   totalFiles++;
                   totalLines += obj.lines ?? 0;
+                  // Accumulate for safety scan
+                  if (obj.path && obj.content !== undefined) {
+                    generatedFiles[obj.path] = obj.content;
+                  }
                   controller.enqueue(encodeLine(obj));
                 } else if (obj.type === 'done') {
                   // Will send our own done at the end
@@ -114,6 +121,9 @@ export async function POST(req: Request) {
             if (obj.type === 'file') {
               totalFiles++;
               totalLines += obj.lines ?? 0;
+              if (obj.path && obj.content !== undefined) {
+                generatedFiles[obj.path] = obj.content;
+              }
               controller.enqueue(encodeLine(obj));
             }
           } catch {
@@ -121,9 +131,17 @@ export async function POST(req: Request) {
           }
         }
 
-        // Send final done line
+        // ── VibeClaw: run safety scan on all generated files ──────
+        const safety = validateCode(generatedFiles);
+
+        // Send final done line with safety info
         controller.enqueue(
-          encodeLine({ type: 'done', total_files: totalFiles, total_lines: totalLines })
+          encodeLine({
+            type: 'done',
+            total_files: totalFiles,
+            total_lines: totalLines,
+            safety: { safe: safety.safe, issues: safety.issues },
+          })
         );
       } catch (err: unknown) {
         const message = err instanceof Error ? err.message : String(err);
