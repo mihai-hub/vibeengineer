@@ -11,11 +11,15 @@
 
 import Anthropic from '@anthropic-ai/sdk';
 
+// Jeff-accessible sites — never includes jeff-asi.com
+const BLOCKED_DOMAINS = ['jeff-asi.com', 'dashboard.jeff-asi.com', 'api.jeff-asi.com'];
+
 interface OperateRequest {
   action: string;
   selector?: string;
   value?: string;
   iframeHtml?: string;
+  url?: string; // fetch external page HTML server-side
 }
 
 interface OperateResult {
@@ -29,22 +33,46 @@ interface OperateResult {
 export async function POST(req: Request) {
   try {
     const body = (await req.json()) as OperateRequest;
-    const { action, selector, value, iframeHtml } = body;
+    const { action, selector, value, iframeHtml, url } = body;
 
     if (!action?.trim()) {
       return Response.json({ error: 'action is required' }, { status: 400 });
+    }
+
+    // Block Jeff dashboard from being operated
+    if (url) {
+      try {
+        const hostname = new URL(url).hostname;
+        if (BLOCKED_DOMAINS.some(d => hostname === d || hostname.endsWith('.' + d))) {
+          return Response.json({ action: 'blocked', found: false, error: 'This domain cannot be operated.' }, { status: 403 });
+        }
+      } catch { /* invalid URL — let it through, will fail at fetch */ }
     }
 
     const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
     const userParts: Anthropic.MessageParam['content'] = [];
 
+    // Fetch external URL server-side if provided
+    let htmlContent = iframeHtml;
+    if (!htmlContent && url?.trim()) {
+      try {
+        const fetchRes = await fetch(url, {
+          headers: { 'User-Agent': 'Mozilla/5.0 (compatible; VibeEngineer-Operator/1.0)' },
+          signal: AbortSignal.timeout(10000),
+        });
+        htmlContent = await fetchRes.text();
+      } catch (fetchErr) {
+        return Response.json({ action: 'error', found: false, error: `Could not fetch URL: ${fetchErr instanceof Error ? fetchErr.message : String(fetchErr)}` }, { status: 400 });
+      }
+    }
+
     // Include HTML content if provided
-    if (iframeHtml?.trim()) {
+    if (htmlContent?.trim()) {
       // Truncate to avoid token limit issues (keep first 30k chars)
-      const truncatedHtml = iframeHtml.length > 30000
-        ? iframeHtml.slice(0, 30000) + '\n... [HTML truncated] ...'
-        : iframeHtml;
+      const truncatedHtml = htmlContent.length > 30000
+        ? htmlContent.slice(0, 30000) + '\n... [HTML truncated] ...'
+        : htmlContent;
 
       userParts.push({
         type: 'text',

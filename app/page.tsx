@@ -98,7 +98,7 @@ export default function LandingPage() {
   const handleBuild = () => {
     const text = prompt.trim();
     if (!text) return;
-    router.push(`/coo?prompt=${encodeURIComponent(text)}`);
+    router.push(`/chat?mode=coo&prompt=${encodeURIComponent(text)}`);
   };
 
   const handleTemplateClick = (t: typeof TEMPLATES[0]) => {
@@ -237,7 +237,7 @@ export default function LandingPage() {
           />
           <div className="flex items-center gap-4 flex-wrap justify-center">
             <Link
-              href="/cto"
+              href="/chat?mode=cto"
               className="hero-cta-pulse flex items-center gap-3 rounded-2xl px-6 py-4 text-sm font-semibold text-white transition-all duration-200 hover:-translate-y-0.5 hover:brightness-110"
               style={{
                 background: 'linear-gradient(135deg, #7c3aed 0%, #3b82f6 100%)',
@@ -247,7 +247,7 @@ export default function LandingPage() {
               Talk to the CTO
             </Link>
             <Link
-              href="/coo"
+              href="/chat?mode=coo"
               className="flex items-center gap-3 rounded-2xl px-6 py-4 text-sm font-semibold text-white transition-all duration-200 hover:-translate-y-0.5 hover:brightness-110"
               style={{
                 background: 'linear-gradient(135deg, #f97316 0%, #ec4899 100%)',
@@ -273,7 +273,7 @@ export default function LandingPage() {
         <div className="grid gap-5 sm:grid-cols-2">
           {/* CTO Card */}
           <Link
-            href="/cto"
+            href="/chat?mode=cto"
             className="group flex flex-col gap-4 rounded-2xl p-6 transition-all duration-200 hover:-translate-y-1"
             style={{
               background: 'rgba(124,58,237,0.07)',
@@ -313,7 +313,7 @@ export default function LandingPage() {
 
           {/* COO Card */}
           <Link
-            href="/coo"
+            href="/chat?mode=coo"
             className="group flex flex-col gap-4 rounded-2xl p-6 transition-all duration-200 hover:-translate-y-1"
             style={{
               background: 'rgba(249,115,22,0.07)',
