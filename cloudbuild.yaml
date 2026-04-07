@@ -1,0 +1,57 @@
+# ============================================================================
+# GOOGLE CLOUD BUILD — VIBEENGINEER
+# ============================================================================
+# Trigger: push to master branch (Cloud Build trigger in GCP console)
+# Builds Docker image, pushes to Artifact Registry, deploys to Cloud Run.
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+substitutions:
+  _REGION: europe-west1
+  _PROJECT: jeff-asi
+  _SERVICE: vibeengineer
+  _REPOSITORY: jeff
+
+steps:
+  # ── Step 1: Build Docker image ─────────────────────────────────────────────
+  - name: gcr.io/cloud-builders/docker
+    id: build
+    args:
+      - build
+      - -t
+      - $_REGION-docker.pkg.dev/$_PROJECT/$_REPOSITORY/$_SERVICE:$SHORT_SHA
+      - -t
+      - $_REGION-docker.pkg.dev/$_PROJECT/$_REPOSITORY/$_SERVICE:latest
+      - .
+
+  # ── Step 2: Push to Artifact Registry ─────────────────────────────────────
+  - name: gcr.io/cloud-builders/docker
+    id: push
+    args:
+      - push
+      - --all-tags
+      - $_REGION-docker.pkg.dev/$_PROJECT/$_REPOSITORY/$_SERVICE
+
+  # ── Step 3: Deploy to Cloud Run ───────────────────────────────────────────
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    id: deploy
+    entrypoint: gcloud
+    args:
+      - run
+      - deploy
+      - $_SERVICE
+      - --image=$_REGION-docker.pkg.dev/$_PROJECT/$_REPOSITORY/$_SERVICE:$SHORT_SHA
+      - --region=$_REGION
+      - --platform=managed
+      - --allow-unauthenticated
+      - --port=8080
+      - --min-instances=0
+      - --max-instances=3
+      - --memory=512Mi
+      - --cpu=1
+      - --set-env-vars=NODE_ENV=production
+
+images:
+  - $_REGION-docker.pkg.dev/$_PROJECT/$_REPOSITORY/$_SERVICE:$SHORT_SHA
+  - $_REGION-docker.pkg.dev/$_PROJECT/$_REPOSITORY/$_SERVICE:latest
