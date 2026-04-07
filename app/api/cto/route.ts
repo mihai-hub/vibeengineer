@@ -7,6 +7,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { guardInput, GuardianBlock } from '@/lib/prompt-guardian';
 
 const BASE_SYSTEM = `You are the CTO and technical co-founder of this startup. The user is describing an app they want to build. Help them make smart technical decisions: stack choice (Next.js/React/Vue), database (Supabase/PlanetScale/SQLite), auth strategy, API design, third-party integrations, scalability concerns, estimated complexity. Be concise and opinionated like a senior CTO. Reference the user's app idea specifically.
 
@@ -25,13 +26,33 @@ When the user is ready to build, output a structured JSON block at the end of yo
   "complexity": "medium"
 }
 \`\`\`
-Only output this JSON block when the user explicitly says they are ready to build or asks you to finalize the stack.`;
+Only output this JSON block when the user explicitly says they are ready to build or asks you to finalize the stack.
+
+IMPORTANT RULES:
+- DO NOT suggest rebuilding existing components/pages — check what already exists first
+- NEVER suggest duplicate API routes — check app/api/ before recommending new endpoints
+- After completing any task, provide a structured summary: what was recommended/changed and why
+- If asked about a feature that already exists in the codebase, enhance it instead of rebuilding`;
 
 function buildSystemPrompt(idea?: string): string {
   if (!idea?.trim()) return BASE_SYSTEM;
 
   const contextSection = `\n\n---\n## App Idea Context\n\nThe user wants to build: ${idea.trim()}`;
   return BASE_SYSTEM + contextSection;
+}
+
+// Keywords that signal the user wants to BUILD something (trigger Builder panel)
+const BUILD_KEYWORDS = [
+  'build', 'create', 'generate', 'make me', 'implement', 'add feature',
+  'add page', 'add component', 'create a page', 'create an app',
+  'i want to build', 'let\'s build', 'can you build', 'ready to build',
+  'start building', 'begin building', 'write the code', 'code this',
+];
+
+function detectsBuildIntent(messages: { role: string; content: string }[]): boolean {
+  const lastUserMsg = [...messages].reverse().find(m => m.role === 'user')?.content ?? '';
+  const lower = lastUserMsg.toLowerCase();
+  return BUILD_KEYWORDS.some(kw => lower.includes(kw));
 }
 
 export async function POST(req: Request) {
@@ -45,13 +66,33 @@ export async function POST(req: Request) {
     return new Response('messages are required', { status: 400 });
   }
 
+  // ── Security: scan last user message ────────────────────────────────────
+  const lastMsg = [...messages].reverse().find(m => m.role === 'user')?.content ?? '';
+  try {
+    guardInput(lastMsg);
+  } catch (err) {
+    if (err instanceof GuardianBlock) return err.toResponse();
+    throw err;
+  }
+
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const systemPrompt = buildSystemPrompt(idea);
+  const shouldOpenBuilder = detectsBuildIntent(messages);
 
   const encoder = new TextEncoder();
 
   const stream = new ReadableStream({
     async start(controller) {
+      // Emit builder panel trigger if user wants to build something
+      if (shouldOpenBuilder) {
+        const panelEvent = JSON.stringify({
+          type: 'vibe_task_open_panel',
+          navigateTo: '/builder',
+          goal: lastMsg.slice(0, 120),
+        });
+        controller.enqueue(encoder.encode(`data: ${panelEvent}\n\n`));
+      }
+
       try {
         const sdkStream = anthropic.messages.stream({
           model: 'claude-opus-4-5',
@@ -63,15 +104,25 @@ export async function POST(req: Request) {
           })),
         });
 
+        let fullResponse = '';
         for await (const event of sdkStream) {
           if (
             event.type === 'content_block_delta' &&
             event.delta.type === 'text_delta'
           ) {
             const token = event.delta.text;
+            fullResponse += token;
             controller.enqueue(encoder.encode(`data: ${token}\n\n`));
           }
         }
+
+        // Emit task summary event after response
+        const summaryEvent = JSON.stringify({
+          type: 'vibe_task_done',
+          summary: fullResponse.slice(0, 300),
+          goal: lastMsg.slice(0, 80),
+        });
+        controller.enqueue(encoder.encode(`data: ${summaryEvent}\n\n`));
 
         controller.enqueue(encoder.encode('data: [DONE]\n\n'));
         controller.close();

@@ -7,6 +7,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { guardInput, GuardianBlock } from '@/lib/prompt-guardian';
 
 const BASE_SYSTEM = `You are an AI COO advisor embedded inside VibeEngineer, a code generation platform. The user has just generated a software product and you have been given the generated files as context.
 
@@ -78,6 +79,15 @@ export async function POST(req: Request) {
 
   if (!messages || messages.length === 0) {
     return new Response('messages are required', { status: 400 });
+  }
+
+  // ── Security: scan last user message ────────────────────────────────────
+  const lastMsg = [...messages].reverse().find(m => m.role === 'user')?.content ?? '';
+  try {
+    guardInput(lastMsg);
+  } catch (err) {
+    if (err instanceof GuardianBlock) return err.toResponse();
+    throw err;
   }
 
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });

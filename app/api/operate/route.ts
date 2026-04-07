@@ -10,6 +10,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { guardInput, GuardianBlock } from '@/lib/prompt-guardian';
 
 // Jeff-accessible sites — never includes jeff-asi.com
 const BLOCKED_DOMAINS = ['jeff-asi.com', 'dashboard.jeff-asi.com', 'api.jeff-asi.com'];
@@ -37,6 +38,14 @@ export async function POST(req: Request) {
 
     if (!action?.trim()) {
       return Response.json({ error: 'action is required' }, { status: 400 });
+    }
+
+    // ── Security: scan action input ──────────────────────────────────────
+    try {
+      guardInput(action);
+    } catch (err) {
+      if (err instanceof GuardianBlock) return err.toResponse();
+      throw err;
     }
 
     // Block Jeff dashboard from being operated

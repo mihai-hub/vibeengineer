@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback, Suspense } from 'react';
-import { useSearchParams } from 'next/navigation';
-import { Send, Loader2, Brain, Briefcase, Globe, ChevronDown } from 'lucide-react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { Send, Loader2, Brain, Briefcase, Globe, ChevronDown, Zap } from 'lucide-react';
 import MarkdownRenderer from '../../components/MarkdownRenderer';
 
 /* ─── Types ──────────────────────────────────────────────────── */
@@ -83,6 +83,7 @@ function extractUrl(text: string): string {
 
 /* ─── Main inner component ───────────────────────────────────── */
 function ChatInner() {
+  const router = useRouter();
   const searchParams = useSearchParams();
   const initialMode = (searchParams.get('mode') as Mode) ?? 'cto';
 
@@ -98,6 +99,7 @@ function ChatInner() {
   const [streaming, setStreaming] = useState(false);
   const [operating, setOperating] = useState(false);
   const [showModePicker, setShowModePicker] = useState(false);
+  const [builderBanner, setBuilderBanner] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -190,6 +192,29 @@ function ChatInner() {
           if (!line.startsWith('data: ')) continue;
           const token = line.slice(6);
           if (token === '[DONE]') break;
+
+          // ── Intercept JSON control events embedded in SSE stream ──
+          if (token.startsWith('{')) {
+            try {
+              const evt = JSON.parse(token) as { type?: string; navigateTo?: string; goal?: string; summary?: string };
+              if (evt.type === 'vibe_task_open_panel') {
+                setBuilderBanner(`⚡ Builder activated — ${(evt.goal ?? 'building now').slice(0, 60)}`);
+                setTimeout(() => router.push(evt.navigateTo ?? '/builder'), 1500);
+                continue;
+              }
+              if (evt.type === 'vibe_task_done') {
+                const summaryMsg: Message = {
+                  role: 'assistant',
+                  content: ['✅ **Task completed**', evt.summary ? `\n${evt.summary.slice(0, 200)}` : '', '\nAsk me for more details.'].filter(Boolean).join('\n'),
+                  mode: activeMode,
+                };
+                setMessages(prev => [...prev, summaryMsg]);
+                setBuilderBanner(null);
+                continue;
+              }
+            } catch { /* not a control event — treat as normal token */ }
+          }
+
           assistantContent += token;
           setMessages([...newMessages, { role: 'assistant', content: assistantContent, mode: activeMode }]);
         }
@@ -215,6 +240,21 @@ function ChatInner() {
   /* ─── Render ─────────────────────────────────────────────────── */
   return (
     <div className="flex flex-col h-screen bg-zinc-950 text-white overflow-hidden">
+
+      {/* ── Builder panel banner ────────────────────────────────── */}
+      {builderBanner && (
+        <div
+          className="shrink-0 flex items-center justify-between px-4 py-2 cursor-pointer text-xs font-medium"
+          style={{ background: 'rgba(6,182,212,0.12)', borderBottom: '1px solid rgba(6,182,212,0.3)', color: '#67e8f9' }}
+          onClick={() => router.push('/builder')}
+        >
+          <span className="flex items-center gap-2">
+            <Zap className="w-3.5 h-3.5 animate-pulse" />
+            {builderBanner}
+          </span>
+          <span className="underline opacity-70">Open Builder →</span>
+        </div>
+      )}
 
       {/* ── Header ─────────────────────────────────────────────── */}
       <div className="shrink-0 border-b border-zinc-800 bg-zinc-900 px-5 py-3 flex items-center justify-between">
