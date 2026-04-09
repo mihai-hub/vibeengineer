@@ -5,7 +5,7 @@
  *
  * model values:
  *   (omitted)  → claude-sonnet-4-5  (Anthropic)
- *   "gemma4"   → gemma-3-27b-it     (Google AI)
+ *   "gemma4"   → gemma-4-27b-it     (Google AI — real Gemma 4, April 2026)
  *
  * Streams lines of:
  *   {"type":"file","path":"...","content":"...","lines":N}
@@ -127,7 +127,7 @@ export async function POST(req: Request) {
         if (useGemma4) {
           const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY ?? '');
           const gemmaModel = genAI.getGenerativeModel({
-            model: 'gemma-3-27b-it',
+            model: 'gemma-4-27b-it',
             systemInstruction: systemPrompt,
           });
 
@@ -189,7 +189,7 @@ export async function POST(req: Request) {
             type: 'done',
             total_files: totalFiles,
             total_lines: totalLines,
-            model_used: useGemma4 ? 'gemma-3-27b-it' : (model || 'claude-sonnet-4-5'),
+            model_used: useGemma4 ? 'gemma-4-27b-it' : (model || 'claude-sonnet-4-5'),
             safety: { safe: safety.safe, issues: safety.issues },
             preflight: preflight
               ? {
