@@ -7,6 +7,12 @@ import MarkdownRenderer from '../../components/MarkdownRenderer';
 
 /* ─── Types ──────────────────────────────────────────────────── */
 type Mode = 'cto' | 'coo' | 'operate';
+type ModelId = 'claude' | 'gemma4';
+
+const MODEL_OPTIONS: { id: ModelId; label: string; badge: string; description: string }[] = [
+  { id: 'claude', label: 'Claude',  badge: '\u2726', description: 'claude-opus-4-5' },
+  { id: 'gemma4', label: 'Gemma 4', badge: '\u25C6', description: 'gemma-3-27b-it'  },
+];
 
 interface Message {
   role: 'user' | 'assistant';
@@ -99,6 +105,8 @@ function ChatInner() {
   const [streaming, setStreaming] = useState(false);
   const [operating, setOperating] = useState(false);
   const [showModePicker, setShowModePicker] = useState(false);
+  const [selectedModel, setSelectedModel] = useState<ModelId>('claude');
+  const [showModelPicker, setShowModelPicker] = useState(false);
   const [builderBanner, setBuilderBanner] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -106,6 +114,13 @@ function ChatInner() {
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => { textareaRef.current?.focus(); }, []);
+  useEffect(() => {
+    if (!showModelPicker) return;
+    const handler = () => setShowModelPicker(false);
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, [showModelPicker]);
+
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -176,7 +191,7 @@ function ChatInner() {
       const res = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: newMessages }),
+        body: JSON.stringify({ messages: newMessages, model: selectedModel }),
         signal: abortRef.current.signal,
       });
       if (!res.ok || !res.body) throw new Error(`API error ${res.status}`);
@@ -361,6 +376,38 @@ function ChatInner() {
           )}
 
           <div className="flex items-end gap-3">
+            {/* Model Selector */}
+            <div className="relative self-end mb-0.5" onClick={e => e.stopPropagation()}>
+              <button
+                type="button"
+                onClick={() => setShowModelPicker(v => !v)}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border border-white/10 bg-white/5 hover:bg-white/10 text-white/60 hover:text-white/90 transition-all"
+              >
+                <span className="text-[11px]">{MODEL_OPTIONS.find(m => m.id === selectedModel)?.badge}</span>
+                <span>{MODEL_OPTIONS.find(m => m.id === selectedModel)?.label}</span>
+                <ChevronDown className="w-3 h-3 opacity-50" />
+              </button>
+              {showModelPicker && (
+                <div className="absolute bottom-full mb-2 left-0 z-50 bg-zinc-900 border border-white/10 rounded-xl shadow-xl overflow-hidden w-52">
+                  {MODEL_OPTIONS.map(opt => (
+                    <button
+                      key={opt.id}
+                      type="button"
+                      onClick={() => { setSelectedModel(opt.id); setShowModelPicker(false); }}
+                      className={`w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-white/5 transition-colors ${selectedModel === opt.id ? 'bg-white/5' : ''}`}
+                    >
+                      <span className="text-base leading-none">{opt.badge}</span>
+                      <div>
+                        <div className="text-sm font-medium text-white/90">{opt.label}</div>
+                        <div className="text-xs text-white/40">{opt.description}</div>
+                      </div>
+                      {selectedModel === opt.id && <span className="ml-auto text-violet-400 text-xs">✓</span>}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+
             {/* Mode pill */}
             <div className={`shrink-0 self-end mb-0.5 px-2 py-1 rounded-lg border text-[10px] font-medium flex items-center gap-1 ${cfg.accent}`}>
               <ModeIcon className="w-3 h-3" />
