@@ -3,6 +3,10 @@
  *
  * POST { prompt: string, model?: string }
  *
+ * model values:
+ *   (omitted)  → claude-sonnet-4-5  (Anthropic)
+ *   "gemma4"   → gemma-3-27b-it     (Google AI)
+ *
  * Streams lines of:
  *   {"type":"file","path":"...","content":"...","lines":N}
  *   {"type":"done","total_files":N,"total_lines":N,"safety":{safe,issues}}
@@ -10,6 +14,7 @@
  */
 
 import Anthropic from '@anthropic-ai/sdk';
+import { GoogleGenerativeAI } from '@google/generative-ai';
 import { validateCode } from '@/lib/vibe-claw';
 import { guardInput, GuardianBlock } from '@/lib/prompt-guardian';
 import { preflightScan } from '@/lib/preflight-scan';
@@ -35,6 +40,16 @@ IMPORTANT RULES (non-negotiable):
 - NEVER create duplicate API routes — check app/api/ before adding new endpoints
 - After completing the task, output a summary of what was created/changed and why
 - If asked to add a feature that already exists, enhance it instead of duplicating`;
+
+// Shared parsed-object shape
+interface FileObj {
+  type: string;
+  path?: string;
+  content?: string;
+  lines?: number;
+  total_files?: number;
+  total_lines?: number;
+}
 
 function encodeLine(obj: object): Uint8Array {
   return new TextEncoder().encode(JSON.stringify(obj) + '\n');
@@ -69,8 +84,8 @@ export async function POST(req: Request) {
   const sessionId = `vibe-gen-${Date.now()}`;
   await saveCheckpoint(sessionId, prompt);
 
-  const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-  const chosenModel = model || 'claude-sonnet-4-5';
+  // ── Routing: choose model backend ────────────────────────────────────────
+  const useGemma4 = model === 'gemma4';
 
   const stream = new ReadableStream({
     async start(controller) {
@@ -78,73 +93,14 @@ export async function POST(req: Request) {
         let buffer = '';
         let totalFiles = 0;
         let totalLines = 0;
-        // Collect generated files for safety validation
         const generatedFiles: Record<string, string> = {};
 
-        const anthropicStream = await anthropic.messages.stream({
-          model: chosenModel,
-          max_tokens: 16000,
-          system: systemPrompt,
-          messages: [
-            {
-              role: 'user',
-              content: `Build this app: ${prompt}`,
-            },
-          ],
-        });
-
-        for await (const chunk of anthropicStream) {
-          if (
-            chunk.type === 'content_block_delta' &&
-            chunk.delta.type === 'text_delta'
-          ) {
-            buffer += chunk.delta.text;
-
-            // Process complete lines
-            const lines = buffer.split('\n');
-            buffer = lines.pop() ?? '';
-
-            for (const line of lines) {
-              const trimmed = line.trim();
-              if (!trimmed) continue;
-
-              try {
-                const obj = JSON.parse(trimmed) as {
-                  type: string;
-                  path?: string;
-                  content?: string;
-                  lines?: number;
-                  total_files?: number;
-                  total_lines?: number;
-                };
-
-                if (obj.type === 'file') {
-                  totalFiles++;
-                  totalLines += obj.lines ?? 0;
-                  // Accumulate for safety scan
-                  if (obj.path && obj.content !== undefined) {
-                    generatedFiles[obj.path] = obj.content;
-                  }
-                  controller.enqueue(encodeLine(obj));
-                } else if (obj.type === 'done') {
-                  // Will send our own done at the end
-                }
-              } catch {
-                // Not valid JSON yet — skip
-              }
-            }
-          }
-        }
-
-        // Process any remaining buffer
-        if (buffer.trim()) {
+        /** Process a single complete line from the AI stream */
+        function processLine(line: string) {
+          const trimmed = line.trim();
+          if (!trimmed) return;
           try {
-            const obj = JSON.parse(buffer.trim()) as {
-              type: string;
-              path?: string;
-              content?: string;
-              lines?: number;
-            };
+            const obj = JSON.parse(trimmed) as FileObj;
             if (obj.type === 'file') {
               totalFiles++;
               totalLines += obj.lines ?? 0;
@@ -153,28 +109,94 @@ export async function POST(req: Request) {
               }
               controller.enqueue(encodeLine(obj));
             }
+            // 'done' lines from the model are ignored — we send our own below
           } catch {
-            // ignore
+            // Incomplete / non-JSON chunk — skip
           }
         }
 
-        // ── VibeClaw: run safety scan on all generated files ──────
+        /** Flush whatever is left in the buffer after streaming ends */
+        function flushBuffer() {
+          if (buffer.trim()) {
+            processLine(buffer.trim());
+            buffer = '';
+          }
+        }
+
+        // ── Branch: Google AI (Gemma 4) ──────────────────────────────────
+        if (useGemma4) {
+          const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY ?? '');
+          const gemmaModel = genAI.getGenerativeModel({
+            model: 'gemma-3-27b-it',
+            systemInstruction: systemPrompt,
+          });
+
+          const gemmaStream = await gemmaModel.generateContentStream(
+            `Build this app: ${prompt}`
+          );
+
+          for await (const chunk of gemmaStream.stream) {
+            const text = chunk.text();
+            if (!text) continue;
+            buffer += text;
+
+            const lines = buffer.split('\n');
+            buffer = lines.pop() ?? '';
+            for (const line of lines) processLine(line);
+          }
+
+          flushBuffer();
+
+        // ── Branch: Anthropic (Claude) ────────────────────────────────────
+        } else {
+          const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+          const chosenModel = model || 'claude-sonnet-4-5';
+
+          const anthropicStream = await anthropic.messages.stream({
+            model: chosenModel,
+            max_tokens: 16000,
+            system: systemPrompt,
+            messages: [{ role: 'user', content: `Build this app: ${prompt}` }],
+          });
+
+          for await (const chunk of anthropicStream) {
+            if (
+              chunk.type === 'content_block_delta' &&
+              chunk.delta.type === 'text_delta'
+            ) {
+              buffer += chunk.delta.text;
+              const lines = buffer.split('\n');
+              buffer = lines.pop() ?? '';
+              for (const line of lines) processLine(line);
+            }
+          }
+
+          flushBuffer();
+        }
+
+        // ── VibeClaw: run safety scan on all generated files ──────────────
         const safety = validateCode(generatedFiles);
 
-        // ── Checkpoint: mark completed ─────────────────────────────
-        await completeCheckpoint(sessionId, `Generated ${totalFiles} files, ${totalLines} lines`);
+        // ── Checkpoint: mark completed ────────────────────────────────────
+        await completeCheckpoint(
+          sessionId,
+          `Generated ${totalFiles} files, ${totalLines} lines`
+        );
 
-        // Send final done line with safety info + preflight summary
+        // ── Final done envelope ───────────────────────────────────────────
         controller.enqueue(
           encodeLine({
             type: 'done',
             total_files: totalFiles,
             total_lines: totalLines,
+            model_used: useGemma4 ? 'gemma-3-27b-it' : (model || 'claude-sonnet-4-5'),
             safety: { safe: safety.safe, issues: safety.issues },
-            preflight: preflight ? {
-              stack: preflight.stack,
-              existing_features_found: preflight.matchingFeatures.length,
-            } : null,
+            preflight: preflight
+              ? {
+                  stack: preflight.stack,
+                  existing_features_found: preflight.matchingFeatures.length,
+                }
+              : null,
           })
         );
       } catch (err: unknown) {

@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.82.0",
+    "@google/generative-ai": "^0.24.1",
     "@supabase/supabase-js": "^2.101.1",
     "@types/html2canvas": "^0.5.35",
     "html2canvas": "^1.4.1",
