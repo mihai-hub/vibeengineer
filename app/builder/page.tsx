@@ -29,6 +29,7 @@ function BuilderInner() {
   const [totalFiles, setTotalFiles] = useState(0);
   const [totalLines, setTotalLines] = useState(0);
   const [generatedFiles, setGeneratedFiles] = useState<Record<string, string>>({});
+  const [selectedModel, setSelectedModel] = useState('claude-sonnet-4-5');
   const [preview, setPreview] = useState<{ logs: string[]; url: string | null; loading: boolean }>({
     logs: [],
     url: null,
@@ -63,7 +64,7 @@ function BuilderInner() {
       const res = await fetch('/api/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ prompt }),
+        body: JSON.stringify({ prompt, model: selectedModel === 'claude-sonnet-4-5' ? undefined : selectedModel }),
       });
 
       if (!res.ok || !res.body) {
@@ -258,23 +259,37 @@ function BuilderInner() {
         <div className="w-full max-w-xl px-6">
           <h1 className="text-2xl font-bold mb-2 text-center">VibeEngineer</h1>
           <p className="text-zinc-400 text-center mb-8">Describe your app. Watch it get built.</p>
-          <form onSubmit={handleManualSubmit} className="flex gap-2">
-            <input
-              type="text"
-              value={manualPrompt}
-              onChange={e => setManualPrompt(e.target.value)}
-              placeholder="Build a SaaS dashboard with analytics and user management..."
-              className="flex-1 bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-3 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-500"
-              autoFocus
-            />
-            <button
-              type="submit"
-              disabled={!manualPrompt.trim()}
-              className="bg-violet-600 text-white px-5 py-3 rounded-lg font-semibold text-sm disabled:opacity-40 hover:bg-violet-500 transition-colors flex items-center gap-2"
-            >
-              <Send size={14} />
-              Build
-            </button>
+          <form onSubmit={handleManualSubmit} className="flex flex-col gap-3">
+            <div className="flex gap-2">
+              <input
+                type="text"
+                value={manualPrompt}
+                onChange={e => setManualPrompt(e.target.value)}
+                placeholder="Build a SaaS dashboard with analytics and user management..."
+                className="flex-1 bg-zinc-900 border border-zinc-700 rounded-lg px-4 py-3 text-sm text-white placeholder-zinc-500 focus:outline-none focus:border-zinc-500"
+                autoFocus
+              />
+              <button
+                type="submit"
+                disabled={!manualPrompt.trim()}
+                className="bg-violet-600 text-white px-5 py-3 rounded-lg font-semibold text-sm disabled:opacity-40 hover:bg-violet-500 transition-colors flex items-center gap-2"
+              >
+                <Send size={14} />
+                Build
+              </button>
+            </div>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-zinc-500">Model:</span>
+              <select
+                value={selectedModel}
+                onChange={e => setSelectedModel(e.target.value)}
+                className="bg-zinc-900 border border-violet-800/50 text-zinc-200 text-xs rounded-lg px-3 py-1.5 focus:outline-none focus:border-violet-500 cursor-pointer hover:border-violet-600 transition-colors"
+              >
+                <option value="claude-sonnet-4-5">Claude Sonnet 4.5</option>
+                <option value="claude-opus-4-5">Claude Opus 4.5</option>
+                <option value="gemma4">Gemma 4 27B ✨</option>
+              </select>
+            </div>
           </form>
         </div>
       </div>
