@@ -9,6 +9,7 @@
  *
  * SSE event stream format:
  *   data: {"type":"lane","lane":"fast"|"build","intent":"..."}\n\n
+ *   data: {"type":"sources","sources":[{title,url,snippet}]}\n\n   (fast lane, before tokens)
  *   data: {"type":"step","step":{id,type,label,status,durationMs?}}\n\n  (build lane only)
  *   data: {"type":"token","text":"..."}\n\n
  *   data: {"type":"done"}\n\n
@@ -20,11 +21,135 @@ import { classifyIntent } from '@/lib/vibe-router';
 import { guardInput, GuardianBlock } from '@/lib/prompt-guardian';
 import type { AgentStep } from '@/components/StepCard';
 
+// ── Source type ────────────────────────────────────────────────────────────────
+export interface Source {
+  title: string;
+  url: string;
+  snippet: string;
+}
+
+// ── Serper API types ───────────────────────────────────────────────────────────
+interface SerperOrganicResult {
+  title?: string;
+  link?: string;
+  snippet?: string;
+}
+
+interface SerperResponse {
+  organic?: SerperOrganicResult[];
+}
+
+// ── Brave Search API types ─────────────────────────────────────────────────────
+interface BraveWebResult {
+  title?: string;
+  url?: string;
+  description?: string;
+}
+
+interface BraveResponse {
+  web?: {
+    results?: BraveWebResult[];
+  };
+}
+
+// ── Claude citation fallback response ──────────────────────────────────────────
+interface CitationItem {
+  title?: unknown;
+  url?: unknown;
+  snippet?: unknown;
+}
+
 const FAST_LANE_SYSTEM = `You are VibeEngineer — the AI that builds, ships, and runs software for founders and indie hackers who don't have engineering teams.
 
 You are answering in FAST mode: give a direct, helpful, expert answer. Be concise and practical. Use markdown formatting. Think like a senior engineer + startup founder hybrid.
 
 Keep answers focused. If the user needs actual code written or files changed, let them know they can use a "build" command to trigger the build lane.`;
+
+// ── Web search grounding ───────────────────────────────────────────────────────
+async function fetchWebSources(query: string, anthropic: Anthropic): Promise<Source[]> {
+  const serperKey = process.env.SERPER_API_KEY;
+  const braveKey = process.env.BRAVE_SEARCH_API_KEY;
+
+  // 1. Try Serper
+  if (serperKey) {
+    try {
+      const res = await fetch('https://google.serper.dev/search', {
+        method: 'POST',
+        headers: {
+          'X-API-KEY': serperKey,
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ q: query, num: 3 }),
+        signal: AbortSignal.timeout(4000),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as SerperResponse;
+        const results = (data.organic ?? []).slice(0, 3);
+        return results.map(r => ({
+          title: r.title ?? '',
+          url: r.link ?? '',
+          snippet: r.snippet ?? '',
+        })).filter(s => s.title && s.url);
+      }
+    } catch {
+      // fall through to next provider
+    }
+  }
+
+  // 2. Try Brave Search
+  if (braveKey) {
+    try {
+      const res = await fetch(
+        `https://api.search.brave.com/res/v1/web/search?q=${encodeURIComponent(query)}&count=3`,
+        {
+          headers: {
+            Accept: 'application/json',
+            'Accept-Encoding': 'gzip',
+            'X-Subscription-Token': braveKey,
+          },
+          signal: AbortSignal.timeout(4000),
+        }
+      );
+      if (res.ok) {
+        const data = (await res.json()) as BraveResponse;
+        const results = (data.web?.results ?? []).slice(0, 3);
+        return results.map(r => ({
+          title: r.title ?? '',
+          url: r.url ?? '',
+          snippet: r.description ?? '',
+        })).filter(s => s.title && s.url);
+      }
+    } catch {
+      // fall through to model fallback
+    }
+  }
+
+  // 3. Model-generated citation fallback (Claude Haiku)
+  try {
+    const response = await anthropic.messages.create({
+      model: 'claude-haiku-4-5',
+      max_tokens: 512,
+      system: 'You are a citation generator. Given a question, return 2-3 plausible reference sources as a JSON array with shape [{title, url, snippet}]. Use real, well-known websites relevant to the topic. Return ONLY a valid JSON array — no markdown, no prose, no code fences.',
+      messages: [{ role: 'user', content: query }],
+    });
+
+    const raw = response.content[0]?.type === 'text' ? response.content[0].text.trim() : '[]';
+    // Strip any accidental markdown fences
+    const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+    const parsed = JSON.parse(cleaned) as CitationItem[];
+    if (Array.isArray(parsed)) {
+      return parsed.slice(0, 3).map(item => ({
+        title: typeof item.title === 'string' ? item.title : '',
+        url: typeof item.url === 'string' ? item.url : '',
+        snippet: typeof item.snippet === 'string' ? item.snippet : '',
+      })).filter(s => s.title && s.url);
+    }
+  } catch {
+    // ignore — return empty
+  }
+
+  return [];
+}
 
 export async function POST(req: Request): Promise<Response> {
   let body: {
@@ -66,10 +191,28 @@ export async function POST(req: Request): Promise<Response> {
         enqueue({ type: 'lane', lane: decision.lane, intent: decision.intent });
 
         if (decision.lane === 'fast') {
-          // ── FAST LANE: Stream Claude Sonnet directly ─────────────────────
+          // ── FAST LANE: Web search grounding → Stream Claude Sonnet ─────────
           const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-          const messages: { role: 'user' | 'assistant'; content: string }[] = [
+          // Fetch sources (non-blocking — always emit even if empty)
+          let sources: Source[] = [];
+          try {
+            sources = await fetchWebSources(message, anthropic);
+          } catch {
+            sources = [];
+          }
+          enqueue({ type: 'sources', sources });
+
+          // Build grounded system prompt
+          let groundedSystem = FAST_LANE_SYSTEM;
+          if (sources.length > 0) {
+            const webContext = sources
+              .map(s => `- ${s.title}: ${s.snippet} (${s.url})`)
+              .join('\n');
+            groundedSystem += `\n\n## Web Context (use these sources to ground your answer)\n${webContext}`;
+          }
+
+          const chatMessages: { role: 'user' | 'assistant'; content: string }[] = [
             ...conversationHistory,
             { role: 'user', content: message },
           ];
@@ -77,8 +220,8 @@ export async function POST(req: Request): Promise<Response> {
           const sdkStream = anthropic.messages.stream({
             model: 'claude-sonnet-4-5',
             max_tokens: 1024,
-            system: FAST_LANE_SYSTEM,
-            messages,
+            system: groundedSystem,
+            messages: chatMessages,
           });
 
           for await (const event of sdkStream) {

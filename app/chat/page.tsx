@@ -2,9 +2,11 @@
 
 import { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Send, Loader2, Brain, Briefcase, Globe, ChevronDown, Zap } from 'lucide-react';
+import { Send, Loader2, Brain, Briefcase, Globe, ChevronDown, Zap, Check } from 'lucide-react';
 import MarkdownRenderer from '../../components/MarkdownRenderer';
 import { StepCard, AgentStep } from '../../components/StepCard';
+import Sources, { Source } from '../../components/Sources';
+import { saveSkill } from '../../lib/skills';
 
 /* ─── Types ──────────────────────────────────────────────────── */
 type Mode = 'cto' | 'coo' | 'operate';
@@ -14,6 +16,7 @@ interface Message {
   content: string;
   mode?: Mode;
   operateResult?: OperateResult | null;
+  sources?: Source[];
 }
 
 interface OperateResult {
@@ -103,15 +106,29 @@ function ChatInner() {
   const [builderBanner, setBuilderBanner] = useState<string | null>(null);
   const [currentLane, setCurrentLane] = useState<'fast' | 'build' | null>(null);
   const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
+  const [currentSources, setCurrentSources] = useState<Source[]>([]);
+  const [savedSkillFor, setSavedSkillFor] = useState<number | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  useEffect(() => { textareaRef.current?.focus(); }, []);
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Handle ?prompt= search param
+  useEffect(() => {
+    const prompt = searchParams.get('prompt');
+    if (prompt) {
+      setInput(prompt);
+      // Auto-send after a brief delay to let the component mount & state update
+      setTimeout(() => sendMessage(prompt), 100);
+    } else {
+      textareaRef.current?.focus();
+    }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
 
   /* ─── Auto-detect mode from input ────────────────────────── */
   const handleInputChange = (e: React.ChangeEvent<HTMLTextAreaElement>) => {
@@ -127,6 +144,13 @@ function ChatInner() {
       if (url && !urlInput) setUrlInput(url);
     }
   };
+
+  const handleSaveSkill = useCallback((msgIndex: number, prompt: string) => {
+    const name = prompt.length > 50 ? prompt.slice(0, 50) + '…' : prompt;
+    saveSkill(name, prompt);
+    setSavedSkillFor(msgIndex);
+    setTimeout(() => setSavedSkillFor(null), 2000);
+  }, []);
 
   /* ─── Send ──────────────────────────────────────────────────── */
   const sendMessage = useCallback(async (overrideText?: string) => {
@@ -174,11 +198,11 @@ function ChatInner() {
     setMessages([...newMessages, assistantPlaceholder]);
     setCurrentLane(null);
     setAgentSteps([]);
+    setCurrentSources([]);
 
     try {
       abortRef.current = new AbortController();
 
-      // Build body in the format /api/vibe expects: { message, conversationHistory }
       const conversationHistory = newMessages.slice(0, -1).map(m => ({ role: m.role, content: m.content }));
 
       const res = await fetch('/api/vibe', {
@@ -193,6 +217,7 @@ function ChatInner() {
       const decoder = new TextDecoder();
       let assistantContent = '';
       let buf = '';
+      let sourcesForMessage: Source[] = [];
 
       while (true) {
         const { done, value } = await reader.read();
@@ -211,9 +236,8 @@ function ChatInner() {
           try {
             evt = JSON.parse(raw) as Record<string, unknown>;
           } catch {
-            // raw text — treat as token
             assistantContent += raw;
-            setMessages(prev => prev.map((m, i) => i === prev.length - 1 && m.role === 'assistant' ? { ...m, content: assistantContent } : m));
+            setMessages(prev => prev.map((m, i) => i === prev.length - 1 ? { ...m, content: assistantContent } : m));
             continue;
           }
 
@@ -221,47 +245,38 @@ function ChatInner() {
 
           if (evtType === 'lane') {
             setCurrentLane((evt.lane as 'fast' | 'build') ?? null);
+          } else if (evtType === 'sources') {
+            sourcesForMessage = (evt.sources as Source[]) ?? [];
+            setCurrentSources(sourcesForMessage);
           } else if (evtType === 'step') {
             const step = evt.step as AgentStep;
             if (step) {
               setAgentSteps(prev => {
                 const idx = prev.findIndex(s => s.id === step.id);
-                if (idx >= 0) {
-                  const updated = [...prev];
-                  updated[idx] = { ...prev[idx], ...step };
-                  return updated;
-                }
+                if (idx >= 0) return prev.map((s, i) => i === idx ? { ...s, ...step } : s);
                 return [...prev, step];
               });
             }
           } else if (evtType === 'token') {
-            const text = (evt.text as string) ?? '';
-            assistantContent += text;
-            setMessages(prev => prev.map((m, i) => i === prev.length - 1 && m.role === 'assistant' ? { ...m, content: assistantContent } : m));
+            const tokenText = (evt.text as string) ?? '';
+            assistantContent += tokenText;
+            setMessages(prev => prev.map((m, i) => i === prev.length - 1 ? { ...m, content: assistantContent } : m));
           } else if (evtType === 'error') {
             const errMsg = (evt.message as string) ?? 'Unknown error';
-            setMessages(prev => prev.map((m, i) => i === prev.length - 1 && m.role === 'assistant' ? { ...m, content: `⚠️ ${errMsg}` } : m));
+            setMessages(prev => prev.map((m, i) => i === prev.length - 1 ? { ...m, content: `⚠️ ${errMsg}` } : m));
           } else if (evtType === 'done') {
-            // stream complete — nothing needed here
+            // pass
           } else if (evtType === 'vibe_task_open_panel') {
             setBuilderBanner(`⚡ Builder activated — ${((evt.goal as string) ?? 'building now').slice(0, 60)}`);
             setTimeout(() => router.push((evt.navigateTo as string) ?? '/builder'), 1500);
-          } else if (evtType === 'vibe_task_done') {
-            const summary = evt.summary as string | undefined;
-            const summaryMsg: Message = {
-              role: 'assistant',
-              content: ['✅ **Task completed**', summary ? `\n${summary.slice(0, 200)}` : '', '\nAsk me for more details.'].filter(Boolean).join('\n'),
-              mode: activeMode,
-            };
-            setMessages(prev => [...prev, summaryMsg]);
-            setBuilderBanner(null);
           }
         }
       }
+      setMessages(prev => prev.map((m, i) => i === prev.length - 1 ? { ...m, content: assistantContent, sources: sourcesForMessage } : m));
     } catch (err: unknown) {
       if (err instanceof Error && err.name === 'AbortError') return;
       const errMsg = err instanceof Error ? err.message : 'Something went wrong.';
-      setMessages(prev => prev.map((m, i) => i === prev.length - 1 && m.role === 'assistant' ? { ...m, content: `⚠️ Error: ${errMsg}` } : m));
+      setMessages(prev => prev.map((m, i) => i === prev.length - 1 ? { ...m, content: `⚠️ Error: ${errMsg}` } : m));
     } finally {
       setStreaming(false);
       setCurrentLane(null);
@@ -276,26 +291,18 @@ function ChatInner() {
   const cfg = MODE_CONFIG[mode];
   const ModeIcon = cfg.icon;
 
-  /* ─── Render ─────────────────────────────────────────────────── */
   return (
     <div className="flex flex-col h-screen bg-zinc-950 text-white overflow-hidden">
-
-      {/* ── Builder panel banner ────────────────────────────────── */}
       {builderBanner && (
         <div
           className="shrink-0 flex items-center justify-between px-4 py-2 cursor-pointer text-xs font-medium"
           style={{ background: 'rgba(6,182,212,0.12)', borderBottom: '1px solid rgba(6,182,212,0.3)', color: '#67e8f9' }}
           onClick={() => router.push('/builder')}
         >
-          <span className="flex items-center gap-2">
-            <Zap className="w-3.5 h-3.5 animate-pulse" />
-            {builderBanner}
-          </span>
+          <span className="flex items-center gap-2"><Zap className="w-3.5 h-3.5 animate-pulse" />{builderBanner}</span>
           <span className="underline opacity-70">Open Builder →</span>
         </div>
       )}
-
-      {/* ── Header ─────────────────────────────────────────────── */}
       <div className="shrink-0 border-b border-zinc-800 bg-zinc-900 px-5 py-3 flex items-center justify-between">
         <div className="flex items-center gap-3">
           <a href="/" className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors">← Back</a>
@@ -304,149 +311,79 @@ function ChatInner() {
             <span className="text-sm font-semibold text-white">VibeEngineer</span>
           </div>
         </div>
-
         <div className="flex items-center gap-2">
-          {/* Live lane indicator */}
-          {currentLane === 'fast' && (
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium animate-pulse" style={{ background: 'rgba(250,204,21,0.12)', border: '1px solid rgba(250,204,21,0.3)', color: '#fbbf24' }}>
-              ⚡ Fast answer
-            </div>
-          )}
-          {currentLane === 'build' && (
-            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium animate-pulse" style={{ background: 'rgba(6,182,212,0.12)', border: '1px solid rgba(6,182,212,0.3)', color: '#67e8f9' }}>
-              🔨 Building…
-            </div>
-          )}
-
-          {/* Mode selector */}
+          {currentLane === 'fast' && <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium animate-pulse" style={{ background: 'rgba(250,204,21,0.12)', border: '1px solid rgba(250,204,21,0.3)', color: '#fbbf24' }}>⚡ Fast answer</div>}
+          {currentLane === 'build' && <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium animate-pulse" style={{ background: 'rgba(6,182,212,0.12)', border: '1px solid rgba(6,182,212,0.3)', color: '#67e8f9' }}>🔨 Building…</div>}
           <div className="relative">
-            <button
-              onClick={() => setShowModePicker(p => !p)}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 hover:border-zinc-600 text-xs text-zinc-300 transition-colors"
-            >
-              <ModeIcon className="w-3.5 h-3.5" />
-              {lockedMode ? cfg.label : 'Auto'}
-              <ChevronDown className="w-3 h-3 opacity-50" />
+            <button onClick={() => setShowModePicker(p => !p)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 hover:border-zinc-600 text-xs text-zinc-300 transition-colors">
+              <ModeIcon className="w-3.5 h-3.5" />{lockedMode ? cfg.label : 'Auto'}<ChevronDown className="w-3 h-3 opacity-50" />
             </button>
             {showModePicker && (
               <div className="absolute right-0 top-9 z-50 w-44 rounded-xl bg-zinc-900 border border-zinc-700 shadow-xl overflow-hidden">
-                <button
-                  onClick={() => { setLockedMode(null); setShowModePicker(false); }}
-                  className="w-full px-4 py-2.5 text-left text-xs text-zinc-300 hover:bg-zinc-800 flex items-center gap-2"
-                >
-                  <span className="w-2 h-2 rounded-full bg-zinc-500" /> Auto-detect
-                </button>
+                <button onClick={() => { setLockedMode(null); setShowModePicker(false); }} className="w-full px-4 py-2.5 text-left text-xs text-zinc-300 hover:bg-zinc-800 flex items-center gap-2"><span className="w-2 h-2 rounded-full bg-zinc-500" /> Auto-detect</button>
                 {(Object.keys(MODE_CONFIG) as Mode[]).map(m => {
-                  const c = MODE_CONFIG[m];
-                  const Icon = c.icon;
-                  return (
-                    <button
-                      key={m}
-                      onClick={() => { setLockedMode(m); setMode(m); setShowModePicker(false); }}
-                      className="w-full px-4 py-2.5 text-left text-xs text-zinc-300 hover:bg-zinc-800 flex items-center gap-2"
-                    >
-                      <Icon className="w-3.5 h-3.5" /> {c.label}
-                      {lockedMode === m && <span className="ml-auto text-[10px] text-zinc-500">✓ locked</span>}
-                    </button>
-                  );
+                  const c = MODE_CONFIG[m]; const Icon = c.icon;
+                  return <button key={m} onClick={() => { setLockedMode(m); setMode(m); setShowModePicker(false); }} className="w-full px-4 py-2.5 text-left text-xs text-zinc-300 hover:bg-zinc-800 flex items-center gap-2"><Icon className="w-3.5 h-3.5" /> {c.label}{lockedMode === m && <span className="ml-auto text-[10px] text-zinc-500">✓ locked</span>}</button>;
                 })}
               </div>
             )}
           </div>
         </div>
       </div>
+      <div className="flex-1 overflow-y-auto px-4 py-6" onClick={() => setShowModePicker(false)}>
+        <div className="max-w-3xl mx-auto space-y-8">
+          {messages.map((msg, i) => {
+            const msgCfg = MODE_CONFIG[msg.mode ?? 'cto'];
+            return (
+              <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : ''}`}>
+                {msg.role === 'assistant' && <div className="shrink-0 w-8 h-8 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center text-base">{msgCfg.avatar}</div>}
+                <div className="flex flex-col gap-2 max-w-[85%]">
+                  <div className={`rounded-2xl px-4 py-3 text-sm leading-relaxed ${msg.role === 'user' ? 'bg-violet-600 text-white rounded-tr-sm self-end' : 'bg-zinc-800/80 text-zinc-100 rounded-tl-sm'}`}>
+                    {msg.role === 'assistant' ? (
+                      msg.content === '' && (streaming || operating) ? (
+                        <span className="flex items-center gap-2 text-zinc-400"><Loader2 className="w-3 h-3 animate-spin" /><span className="text-xs">{operating ? 'Operating…' : 'Thinking…'}</span></span>
+                      ) : (
+                        <>
+                          {i === messages.length - 1 && (currentLane || agentSteps.length > 0) && <StepCard steps={agentSteps} isRunning={streaming} lane={currentLane ?? undefined} />}
+                          <MarkdownRenderer content={msg.content} />
+                        </>
+                      )
+                    ) : <p className="whitespace-pre-wrap">{msg.content}</p>}
+                  </div>
 
-      {/* ── Messages ────────────────────────────────────────────── */}
-      <div className="flex-1 overflow-y-auto px-4 py-6 space-y-6" onClick={() => setShowModePicker(false)}>
-        {messages.map((msg, i) => {
-          const msgCfg = MODE_CONFIG[msg.mode ?? 'cto'];
-          return (
-            <div key={i} className={`flex gap-3 ${msg.role === 'user' ? 'justify-end' : 'justify-start'}`}>
-              {msg.role === 'assistant' && (
-                <div className="shrink-0 w-8 h-8 rounded-full bg-zinc-800 border border-zinc-700 flex items-center justify-center text-base">
-                  {msgCfg.avatar}
+                  {msg.role === 'assistant' && msg.sources && msg.sources.length > 0 && <Sources sources={msg.sources} />}
+
+                  {msg.role === 'assistant' && i > 0 && !streaming && (
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => {
+                          const userMsg = [...messages.slice(0, i)].reverse().find(m => m.role === 'user');
+                          if (userMsg) handleSaveSkill(i, userMsg.content);
+                        }}
+                        className="inline-flex items-center gap-1.5 px-2 py-1 text-xs rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white transition border border-zinc-700/50"
+                      >
+                        {savedSkillFor === i ? <><Check size={11} className="text-green-400" />Saved</> : <><Zap size={11} />Save as Skill</>}
+                      </button>
+                      <a href="/skills" className="text-[11px] text-zinc-600 hover:text-zinc-400 transition underline-offset-2 hover:underline">View skills</a>
+                    </div>
+                  )}
                 </div>
-              )}
-              <div className={`max-w-[75%] rounded-2xl px-4 py-3 text-sm leading-relaxed ${
-                msg.role === 'user'
-                  ? 'bg-violet-600 text-white rounded-tr-sm'
-                  : 'bg-zinc-800/80 text-zinc-100 rounded-tl-sm'
-              }`}>
-                {msg.role === 'assistant' ? (
-                  msg.content === '' && (streaming || operating) ? (
-                    <span className="flex items-center gap-2 text-zinc-400">
-                      <Loader2 className="w-3 h-3 animate-spin" />
-                      <span className="text-xs">{operating ? 'Operating browser…' : 'Thinking…'}</span>
-                    </span>
-                  ) : (
-                    <>
-                      {i === messages.length - 1 && (currentLane || agentSteps.length > 0) && (
-                        <StepCard steps={agentSteps} isRunning={streaming} lane={currentLane ?? undefined} />
-                      )}
-                      <MarkdownRenderer content={msg.content} />
-                    </>
-                  )
-                ) : (
-                  <p className="whitespace-pre-wrap">{msg.content}</p>
-                )}
+                {msg.role === 'user' && <div className="shrink-0 w-8 h-8 rounded-full bg-violet-600/20 border border-violet-500/30 flex items-center justify-center text-base">👤</div>}
               </div>
-              {msg.role === 'user' && (
-                <div className="shrink-0 w-8 h-8 rounded-full bg-violet-600/20 border border-violet-500/30 flex items-center justify-center text-base">👤</div>
-              )}
-            </div>
-          );
-        })}
+            );
+          })}
+        </div>
         <div ref={messagesEndRef} />
       </div>
-
-      {/* ── Input area ──────────────────────────────────────────── */}
       <div className="shrink-0 border-t border-zinc-800 bg-zinc-900 px-4 py-4">
         <div className="max-w-3xl mx-auto space-y-2">
-
-          {/* URL input — shown when operator mode detected */}
-          {mode === 'operate' && (
-            <div className="flex items-center gap-2">
-              <Globe className="w-4 h-4 text-cyan-400 shrink-0" />
-              <input
-                type="url"
-                value={urlInput}
-                onChange={e => setUrlInput(e.target.value)}
-                placeholder="https://example.com — URL to operate (optional)"
-                className="flex-1 rounded-lg bg-zinc-800 border border-cyan-500/30 px-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-cyan-500/50"
-              />
-            </div>
-          )}
-
+          {mode === 'operate' && <div className="flex items-center gap-2"><Globe className="w-4 h-4 text-cyan-400 shrink-0" /><input type="url" value={urlInput} onChange={e => setUrlInput(e.target.value)} placeholder="https://example.com — URL to operate (optional)" className="flex-1 rounded-lg bg-zinc-800 border border-cyan-500/30 px-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-cyan-500/50" /></div>}
           <div className="flex items-end gap-3">
-            {/* Mode pill */}
-            <div className={`shrink-0 self-end mb-0.5 px-2 py-1 rounded-lg border text-[10px] font-medium flex items-center gap-1 ${cfg.accent}`}>
-              <ModeIcon className="w-3 h-3" />
-              {cfg.label}
-            </div>
-
-            <textarea
-              ref={textareaRef}
-              value={input}
-              onChange={handleInputChange}
-              onKeyDown={handleKeyDown}
-              placeholder="Ask anything, or say 'build me a…' to start building"
-              rows={1}
-              className={`flex-1 resize-none rounded-xl bg-zinc-800 border border-zinc-700 px-4 py-3 text-sm text-white placeholder-zinc-500 focus:outline-none focus:ring-1 transition-colors ${cfg.ring}`}
-              style={{ minHeight: '44px', maxHeight: '140px' }}
-            />
-            <button
-              onClick={() => sendMessage()}
-              disabled={streaming || operating || !input.trim()}
-              className={`shrink-0 w-10 h-10 rounded-xl ${cfg.btn} disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center transition-colors`}
-            >
-              {streaming || operating
-                ? <Loader2 className="w-4 h-4 animate-spin" />
-                : <Send className="w-4 h-4" />}
-            </button>
+            <div className={`shrink-0 self-end mb-0.5 px-2 py-1 rounded-lg border text-[10px] font-medium flex items-center gap-1 ${cfg.accent}`}><ModeIcon className="w-3 h-3" />{cfg.label}</div>
+            <textarea ref={textareaRef} value={input} onChange={handleInputChange} onKeyDown={handleKeyDown} placeholder="Ask anything, or say 'build me a…' to start building" rows={1} className={`flex-1 resize-none rounded-xl bg-zinc-800 border border-zinc-700 px-4 py-3 text-sm text-white placeholder-zinc-500 focus:outline-none focus:ring-1 transition-colors ${cfg.ring}`} style={{ minHeight: '44px', maxHeight: '140px' }} />
+            <button onClick={() => sendMessage()} disabled={streaming || operating || !input.trim()} className={`shrink-0 w-10 h-10 rounded-xl ${cfg.btn} disabled:opacity-40 disabled:cursor-not-allowed flex items-center justify-center transition-colors`}>{streaming || operating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}</button>
           </div>
-          <p className="text-center text-xs text-zinc-600">
-            ⚡ fast answers for questions &nbsp;·&nbsp; 🔨 build mode for code &amp; deploy
-          </p>
+          <p className="text-center text-xs text-zinc-600">⚡ fast answers for questions &nbsp;·&nbsp; 🔨 build mode for code &amp; deploy</p>
         </div>
       </div>
     </div>
@@ -454,13 +391,5 @@ function ChatInner() {
 }
 
 export default function ChatPage() {
-  return (
-    <Suspense fallback={
-      <div className="flex items-center justify-center h-screen bg-zinc-950">
-        <Loader2 className="w-6 h-6 animate-spin text-violet-400" />
-      </div>
-    }>
-      <ChatInner />
-    </Suspense>
-  );
+  return <Suspense fallback={<div className="flex items-center justify-center h-screen bg-zinc-950"><Loader2 className="w-6 h-6 animate-spin text-violet-400" /></div>}><ChatInner /></Suspense>;
 }

@@ -87,10 +87,12 @@ User message
 6. Step visualization — same AgentStepCard style as Jeff chat (already built in wellsassy-control-center)
 7. Speed indicator — show users which lane they're in ("Fast answer" vs "Building…")
 
-### Phase 3 — Perplexity Computer features
-8. Skills — save reusable build recipes ("deploy to GCP", "add auth", "add Stripe")
-9. User memory — remember their stack, their preferences, their previous projects
-10. Local agent — downloadable Mac/Windows agent for real computer control
+### Phase 3 — Perplexity Computer features (BUILD THIS NOW)
+8. Web search grounding — every fast-lane answer includes live web sources (Perplexity style)
+9. Source citations — render cited sources below AI answers (domain + title + link)
+10. Skills — save reusable build recipes ("deploy to GCP", "add auth", "add Stripe") in Supabase
+11. User memory — remember their stack, their preferences, their previous projects
+12. Local agent — downloadable Mac/Windows agent for real computer control
 
 ---
 
