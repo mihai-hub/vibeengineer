@@ -8,12 +8,6 @@ import { StepCard, AgentStep } from '../../components/StepCard';
 
 /* ─── Types ──────────────────────────────────────────────────── */
 type Mode = 'cto' | 'coo' | 'operate';
-type ModelId = 'claude' | 'gemma4';
-
-const MODEL_OPTIONS: { id: ModelId; label: string; badge: string; description: string }[] = [
-  { id: 'claude', label: 'Claude',  badge: '\u2726', description: 'claude-opus-4-5' },
-  { id: 'gemma4', label: 'Gemma 4', badge: '\u25C6', description: 'gemma-3-27b-it'  },
-];
 
 interface Message {
   role: 'user' | 'assistant';
@@ -106,8 +100,6 @@ function ChatInner() {
   const [streaming, setStreaming] = useState(false);
   const [operating, setOperating] = useState(false);
   const [showModePicker, setShowModePicker] = useState(false);
-  const [selectedModel, setSelectedModel] = useState<ModelId>('claude');
-  const [showModelPicker, setShowModelPicker] = useState(false);
   const [builderBanner, setBuilderBanner] = useState<string | null>(null);
   const [currentLane, setCurrentLane] = useState<'fast' | 'build' | null>(null);
   const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
@@ -117,13 +109,6 @@ function ChatInner() {
   const abortRef = useRef<AbortController | null>(null);
 
   useEffect(() => { textareaRef.current?.focus(); }, []);
-  useEffect(() => {
-    if (!showModelPicker) return;
-    const handler = () => setShowModelPicker(false);
-    document.addEventListener('mousedown', handler);
-    return () => document.removeEventListener('mousedown', handler);
-  }, [showModelPicker]);
-
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
@@ -192,10 +177,14 @@ function ChatInner() {
 
     try {
       abortRef.current = new AbortController();
+
+      // Build body in the format /api/vibe expects: { message, conversationHistory }
+      const conversationHistory = newMessages.slice(0, -1).map(m => ({ role: m.role, content: m.content }));
+
       const res = await fetch('/api/vibe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: newMessages }),
+        body: JSON.stringify({ message: text, conversationHistory }),
         signal: abortRef.current.signal,
       });
       if (!res.ok || !res.body) throw new Error(`API error ${res.status}`);
@@ -203,50 +192,76 @@ function ChatInner() {
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
       let assistantContent = '';
+      let buf = '';
+
       while (true) {
         const { done, value } = await reader.read();
         if (done) break;
-        const chunk = decoder.decode(value, { stream: true });
-        for (const line of chunk.split('\n')) {
-          if (!line.startsWith('data: ')) continue;
-          const token = line.slice(6);
-          if (token === '[DONE]') break;
+        buf += decoder.decode(value, { stream: true });
+        const parts = buf.split('\n\n');
+        buf = parts.pop() ?? '';
 
-          // ── Intercept JSON control events embedded in SSE stream ──
-          if (token.startsWith('{')) {
-            try {
-              const evt = JSON.parse(token) as { type?: string; value?: string; navigateTo?: string; goal?: string; summary?: string };
-              if (evt.type === 'lane') {
-                setCurrentLane((evt.value as 'fast' | 'build') ?? null);
-                continue;
-              }
-              if (evt.type === 'vibe_task_open_panel') {
-                setBuilderBanner(`⚡ Builder activated — ${(evt.goal ?? 'building now').slice(0, 60)}`);
-                setTimeout(() => router.push(evt.navigateTo ?? '/builder'), 1500);
-                continue;
-              }
-              if (evt.type === 'vibe_task_done') {
-                const summaryMsg: Message = {
-                  role: 'assistant',
-                  content: ['✅ **Task completed**', evt.summary ? `\n${evt.summary.slice(0, 200)}` : '', '\nAsk me for more details.'].filter(Boolean).join('\n'),
-                  mode: activeMode,
-                };
-                setMessages(prev => [...prev, summaryMsg]);
-                setBuilderBanner(null);
-                continue;
-              }
-            } catch { /* not a control event — treat as normal token */ }
+        for (const part of parts) {
+          const dataLine = part.split('\n').find(l => l.startsWith('data: '));
+          if (!dataLine) continue;
+          const raw = dataLine.slice(6).trim();
+          if (!raw || raw === '[DONE]') continue;
+
+          let evt: Record<string, unknown>;
+          try {
+            evt = JSON.parse(raw) as Record<string, unknown>;
+          } catch {
+            // raw text — treat as token
+            assistantContent += raw;
+            setMessages(prev => prev.map((m, i) => i === prev.length - 1 && m.role === 'assistant' ? { ...m, content: assistantContent } : m));
+            continue;
           }
 
-          assistantContent += token;
-          setMessages([...newMessages, { role: 'assistant', content: assistantContent, mode: activeMode }]);
+          const evtType = evt.type as string | undefined;
+
+          if (evtType === 'lane') {
+            setCurrentLane((evt.lane as 'fast' | 'build') ?? null);
+          } else if (evtType === 'step') {
+            const step = evt.step as AgentStep;
+            if (step) {
+              setAgentSteps(prev => {
+                const idx = prev.findIndex(s => s.id === step.id);
+                if (idx >= 0) {
+                  const updated = [...prev];
+                  updated[idx] = { ...prev[idx], ...step };
+                  return updated;
+                }
+                return [...prev, step];
+              });
+            }
+          } else if (evtType === 'token') {
+            const text = (evt.text as string) ?? '';
+            assistantContent += text;
+            setMessages(prev => prev.map((m, i) => i === prev.length - 1 && m.role === 'assistant' ? { ...m, content: assistantContent } : m));
+          } else if (evtType === 'error') {
+            const errMsg = (evt.message as string) ?? 'Unknown error';
+            setMessages(prev => prev.map((m, i) => i === prev.length - 1 && m.role === 'assistant' ? { ...m, content: `⚠️ ${errMsg}` } : m));
+          } else if (evtType === 'done') {
+            // stream complete — nothing needed here
+          } else if (evtType === 'vibe_task_open_panel') {
+            setBuilderBanner(`⚡ Builder activated — ${((evt.goal as string) ?? 'building now').slice(0, 60)}`);
+            setTimeout(() => router.push((evt.navigateTo as string) ?? '/builder'), 1500);
+          } else if (evtType === 'vibe_task_done') {
+            const summary = evt.summary as string | undefined;
+            const summaryMsg: Message = {
+              role: 'assistant',
+              content: ['✅ **Task completed**', summary ? `\n${summary.slice(0, 200)}` : '', '\nAsk me for more details.'].filter(Boolean).join('\n'),
+              mode: activeMode,
+            };
+            setMessages(prev => [...prev, summaryMsg]);
+            setBuilderBanner(null);
+          }
         }
       }
-      setMessages([...newMessages, { role: 'assistant', content: assistantContent, mode: activeMode }]);
     } catch (err: unknown) {
       if (err instanceof Error && err.name === 'AbortError') return;
       const errMsg = err instanceof Error ? err.message : 'Something went wrong.';
-      setMessages([...newMessages, { role: 'assistant', content: `⚠️ Error: ${errMsg}`, mode: activeMode }]);
+      setMessages(prev => prev.map((m, i) => i === prev.length - 1 && m.role === 'assistant' ? { ...m, content: `⚠️ Error: ${errMsg}` } : m));
     } finally {
       setStreaming(false);
       setCurrentLane(null);
@@ -286,45 +301,58 @@ function ChatInner() {
           <a href="/" className="text-xs text-zinc-500 hover:text-zinc-300 transition-colors">← Back</a>
           <div className="flex items-center gap-2">
             <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
-            <span className="text-sm font-semibold text-white">AI {cfg.label}</span>
-            <span className="text-xs text-zinc-500">— auto-detecting from your message</span>
+            <span className="text-sm font-semibold text-white">VibeEngineer</span>
           </div>
         </div>
 
-        {/* Mode selector */}
-        <div className="relative">
-          <button
-            onClick={() => setShowModePicker(p => !p)}
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 hover:border-zinc-600 text-xs text-zinc-300 transition-colors"
-          >
-            <ModeIcon className="w-3.5 h-3.5" />
-            {lockedMode ? cfg.label : 'Auto'}
-            <ChevronDown className="w-3 h-3 opacity-50" />
-          </button>
-          {showModePicker && (
-            <div className="absolute right-0 top-9 z-50 w-44 rounded-xl bg-zinc-900 border border-zinc-700 shadow-xl overflow-hidden">
-              <button
-                onClick={() => { setLockedMode(null); setShowModePicker(false); }}
-                className="w-full px-4 py-2.5 text-left text-xs text-zinc-300 hover:bg-zinc-800 flex items-center gap-2"
-              >
-                <span className="w-2 h-2 rounded-full bg-zinc-500" /> Auto-detect
-              </button>
-              {(Object.keys(MODE_CONFIG) as Mode[]).map(m => {
-                const c = MODE_CONFIG[m];
-                const Icon = c.icon;
-                return (
-                  <button
-                    key={m}
-                    onClick={() => { setLockedMode(m); setMode(m); setShowModePicker(false); }}
-                    className="w-full px-4 py-2.5 text-left text-xs text-zinc-300 hover:bg-zinc-800 flex items-center gap-2"
-                  >
-                    <Icon className="w-3.5 h-3.5" /> {c.label}
-                    {lockedMode === m && <span className="ml-auto text-[10px] text-zinc-500">✓ locked</span>}
-                  </button>
-                );
-              })}
+        <div className="flex items-center gap-2">
+          {/* Live lane indicator */}
+          {currentLane === 'fast' && (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium animate-pulse" style={{ background: 'rgba(250,204,21,0.12)', border: '1px solid rgba(250,204,21,0.3)', color: '#fbbf24' }}>
+              ⚡ Fast answer
             </div>
           )}
+          {currentLane === 'build' && (
+            <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium animate-pulse" style={{ background: 'rgba(6,182,212,0.12)', border: '1px solid rgba(6,182,212,0.3)', color: '#67e8f9' }}>
+              🔨 Building…
+            </div>
+          )}
+
+          {/* Mode selector */}
+          <div className="relative">
+            <button
+              onClick={() => setShowModePicker(p => !p)}
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 hover:border-zinc-600 text-xs text-zinc-300 transition-colors"
+            >
+              <ModeIcon className="w-3.5 h-3.5" />
+              {lockedMode ? cfg.label : 'Auto'}
+              <ChevronDown className="w-3 h-3 opacity-50" />
+            </button>
+            {showModePicker && (
+              <div className="absolute right-0 top-9 z-50 w-44 rounded-xl bg-zinc-900 border border-zinc-700 shadow-xl overflow-hidden">
+                <button
+                  onClick={() => { setLockedMode(null); setShowModePicker(false); }}
+                  className="w-full px-4 py-2.5 text-left text-xs text-zinc-300 hover:bg-zinc-800 flex items-center gap-2"
+                >
+                  <span className="w-2 h-2 rounded-full bg-zinc-500" /> Auto-detect
+                </button>
+                {(Object.keys(MODE_CONFIG) as Mode[]).map(m => {
+                  const c = MODE_CONFIG[m];
+                  const Icon = c.icon;
+                  return (
+                    <button
+                      key={m}
+                      onClick={() => { setLockedMode(m); setMode(m); setShowModePicker(false); }}
+                      className="w-full px-4 py-2.5 text-left text-xs text-zinc-300 hover:bg-zinc-800 flex items-center gap-2"
+                    >
+                      <Icon className="w-3.5 h-3.5" /> {c.label}
+                      {lockedMode === m && <span className="ml-auto text-[10px] text-zinc-500">✓ locked</span>}
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
@@ -390,38 +418,6 @@ function ChatInner() {
           )}
 
           <div className="flex items-end gap-3">
-            {/* Model Selector */}
-            <div className="relative self-end mb-0.5" onClick={e => e.stopPropagation()}>
-              <button
-                type="button"
-                onClick={() => setShowModelPicker(v => !v)}
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium border border-white/10 bg-white/5 hover:bg-white/10 text-white/60 hover:text-white/90 transition-all"
-              >
-                <span className="text-[11px]">{MODEL_OPTIONS.find(m => m.id === selectedModel)?.badge}</span>
-                <span>{MODEL_OPTIONS.find(m => m.id === selectedModel)?.label}</span>
-                <ChevronDown className="w-3 h-3 opacity-50" />
-              </button>
-              {showModelPicker && (
-                <div className="absolute bottom-full mb-2 left-0 z-50 bg-zinc-900 border border-white/10 rounded-xl shadow-xl overflow-hidden w-52">
-                  {MODEL_OPTIONS.map(opt => (
-                    <button
-                      key={opt.id}
-                      type="button"
-                      onClick={() => { setSelectedModel(opt.id); setShowModelPicker(false); }}
-                      className={`w-full flex items-center gap-3 px-4 py-3 text-left hover:bg-white/5 transition-colors ${selectedModel === opt.id ? 'bg-white/5' : ''}`}
-                    >
-                      <span className="text-base leading-none">{opt.badge}</span>
-                      <div>
-                        <div className="text-sm font-medium text-white/90">{opt.label}</div>
-                        <div className="text-xs text-white/40">{opt.description}</div>
-                      </div>
-                      {selectedModel === opt.id && <span className="ml-auto text-violet-400 text-xs">✓</span>}
-                    </button>
-                  ))}
-                </div>
-              )}
-            </div>
-
             {/* Mode pill */}
             <div className={`shrink-0 self-end mb-0.5 px-2 py-1 rounded-lg border text-[10px] font-medium flex items-center gap-1 ${cfg.accent}`}>
               <ModeIcon className="w-3 h-3" />
@@ -433,16 +429,9 @@ function ChatInner() {
               value={input}
               onChange={handleInputChange}
               onKeyDown={handleKeyDown}
-              placeholder={
-                mode === 'operate'
-                  ? 'Click the sign up button… / Go to https://… and find the pricing…'
-                  : mode === 'coo'
-                  ? 'How should I price this? Who is my customer?…'
-                  : 'What stack should I use? How do I architect this?…'
-              }
+              placeholder="Ask anything, or say 'build me a…' to start building"
               rows={1}
-              disabled={streaming || operating}
-              className={`flex-1 resize-none rounded-xl bg-zinc-800 border border-zinc-700 px-4 py-3 text-sm text-white placeholder-zinc-500 focus:outline-none focus:ring-1 disabled:opacity-50 transition-colors ${cfg.ring}`}
+              className={`flex-1 resize-none rounded-xl bg-zinc-800 border border-zinc-700 px-4 py-3 text-sm text-white placeholder-zinc-500 focus:outline-none focus:ring-1 transition-colors ${cfg.ring}`}
               style={{ minHeight: '44px', maxHeight: '140px' }}
             />
             <button
@@ -456,7 +445,7 @@ function ChatInner() {
             </button>
           </div>
           <p className="text-center text-xs text-zinc-600">
-            Auto-detects CTO / COO / Operator from your message — or lock a mode above
+            ⚡ fast answers for questions &nbsp;·&nbsp; 🔨 build mode for code &amp; deploy
           </p>
         </div>
       </div>
