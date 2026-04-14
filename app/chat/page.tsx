@@ -4,6 +4,7 @@ import { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { Send, Loader2, Brain, Briefcase, Globe, ChevronDown, Zap } from 'lucide-react';
 import MarkdownRenderer from '../../components/MarkdownRenderer';
+import { StepCard, AgentStep } from '../../components/StepCard';
 
 /* ─── Types ──────────────────────────────────────────────────── */
 type Mode = 'cto' | 'coo' | 'operate';
@@ -108,6 +109,8 @@ function ChatInner() {
   const [selectedModel, setSelectedModel] = useState<ModelId>('claude');
   const [showModelPicker, setShowModelPicker] = useState(false);
   const [builderBanner, setBuilderBanner] = useState<string | null>(null);
+  const [currentLane, setCurrentLane] = useState<'fast' | 'build' | null>(null);
+  const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -184,14 +187,15 @@ function ChatInner() {
     setStreaming(true);
     const assistantPlaceholder: Message = { role: 'assistant', content: '', mode: activeMode };
     setMessages([...newMessages, assistantPlaceholder]);
+    setCurrentLane(null);
+    setAgentSteps([]);
 
     try {
       abortRef.current = new AbortController();
-      const endpoint = activeMode === 'cto' ? '/api/cto' : '/api/coo';
-      const res = await fetch(endpoint, {
+      const res = await fetch('/api/vibe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ messages: newMessages, model: selectedModel }),
+        body: JSON.stringify({ messages: newMessages }),
         signal: abortRef.current.signal,
       });
       if (!res.ok || !res.body) throw new Error(`API error ${res.status}`);
@@ -211,7 +215,11 @@ function ChatInner() {
           // ── Intercept JSON control events embedded in SSE stream ──
           if (token.startsWith('{')) {
             try {
-              const evt = JSON.parse(token) as { type?: string; navigateTo?: string; goal?: string; summary?: string };
+              const evt = JSON.parse(token) as { type?: string; value?: string; navigateTo?: string; goal?: string; summary?: string };
+              if (evt.type === 'lane') {
+                setCurrentLane((evt.value as 'fast' | 'build') ?? null);
+                continue;
+              }
               if (evt.type === 'vibe_task_open_panel') {
                 setBuilderBanner(`⚡ Builder activated — ${(evt.goal ?? 'building now').slice(0, 60)}`);
                 setTimeout(() => router.push(evt.navigateTo ?? '/builder'), 1500);
@@ -241,6 +249,7 @@ function ChatInner() {
       setMessages([...newMessages, { role: 'assistant', content: `⚠️ Error: ${errMsg}`, mode: activeMode }]);
     } finally {
       setStreaming(false);
+      setCurrentLane(null);
       textareaRef.current?.focus();
     }
   }, [input, streaming, operating, messages, lockedMode, urlInput]);
@@ -342,7 +351,12 @@ function ChatInner() {
                       <span className="text-xs">{operating ? 'Operating browser…' : 'Thinking…'}</span>
                     </span>
                   ) : (
-                    <MarkdownRenderer content={msg.content} />
+                    <>
+                      {i === messages.length - 1 && (currentLane || agentSteps.length > 0) && (
+                        <StepCard steps={agentSteps} isRunning={streaming} lane={currentLane ?? undefined} />
+                      )}
+                      <MarkdownRenderer content={msg.content} />
+                    </>
                   )
                 ) : (
                   <p className="whitespace-pre-wrap">{msg.content}</p>
