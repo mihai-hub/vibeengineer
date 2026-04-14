@@ -125,11 +125,14 @@ async function fetchWebSources(query: string, anthropic: Anthropic): Promise<Sou
   }
 
   // 3. Model-generated citation fallback (Claude Haiku)
+  // NOTE: no real search key configured — skip hallucinated sources, return empty
+  if (!serperKey && !braveKey) return [];
+
   try {
     const response = await anthropic.messages.create({
       model: 'claude-haiku-4-5',
       max_tokens: 512,
-      system: 'You are a citation generator. Given a question, return 2-3 plausible reference sources as a JSON array with shape [{title, url, snippet}]. Use real, well-known websites relevant to the topic. Return ONLY a valid JSON array — no markdown, no prose, no code fences.',
+      system: `You are a citation generator. Today is ${new Date().getFullYear()}. Given a question, return 2-3 plausible reference sources as a JSON array with shape [{title, url, snippet}]. Use real, well-known websites relevant to the topic. Do NOT include year numbers in titles. Return ONLY a valid JSON array — no markdown, no prose, no code fences.`,
       messages: [{ role: 'user', content: query }],
     });
 
