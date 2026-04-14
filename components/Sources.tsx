@@ -27,7 +27,7 @@ export default function Sources({ sources }: { sources: Source[] }) {
         <span className="text-[11px] font-medium text-zinc-500 uppercase tracking-wide">Sources</span>
       </div>
 
-      {/* Source cards */}
+      {/* Source cards — numbered to match inline [1][2][3] citations */}
       <div className="flex flex-wrap gap-2">
         {sources.map((source, i) => (
           <a
@@ -35,27 +35,21 @@ export default function Sources({ sources }: { sources: Source[] }) {
             href={source.url}
             target="_blank"
             rel="noopener noreferrer"
-            className="block bg-zinc-800/60 border border-zinc-700/50 rounded-lg p-3 hover:bg-zinc-700/60 transition-colors cursor-pointer no-underline"
+            className="flex gap-2 bg-zinc-800/60 border border-zinc-700/50 rounded-lg p-2.5 hover:bg-zinc-700/60 transition-colors cursor-pointer no-underline"
             style={{ minWidth: '180px', maxWidth: '280px', flex: '1 1 180px' }}
           >
-            {/* Domain badge */}
-            <div className="mb-1.5">
-              <span className="text-[10px] text-zinc-400 bg-zinc-700/50 rounded px-1.5 py-0.5 font-mono">
-                {getDomain(source.url)}
-              </span>
-            </div>
-
-            {/* Title */}
-            <p className="text-sm font-medium text-zinc-200 line-clamp-2 leading-snug mb-1">
-              {source.title}
-            </p>
-
-            {/* Snippet */}
-            {source.snippet && (
-              <p className="text-xs text-zinc-400 line-clamp-2 leading-relaxed">
-                {source.snippet}
+            {/* Citation number */}
+            <span className="shrink-0 w-5 h-5 rounded bg-zinc-700 text-zinc-300 text-[10px] font-bold flex items-center justify-center mt-0.5">
+              {i + 1}
+            </span>
+            <div className="min-w-0">
+              {/* Domain */}
+              <p className="text-[10px] text-zinc-500 font-mono mb-0.5 truncate">{getDomain(source.url)}</p>
+              {/* Title */}
+              <p className="text-xs font-medium text-zinc-200 line-clamp-2 leading-snug">
+                {source.title}
               </p>
-            )}
+            </div>
           </a>
         ))}
       </div>

@@ -206,13 +206,13 @@ export async function POST(req: Request): Promise<Response> {
           }
           enqueue({ type: 'sources', sources });
 
-          // Build grounded system prompt
+          // Build grounded system prompt — inject sources so Claude answers FROM them
           let groundedSystem = FAST_LANE_SYSTEM;
           if (sources.length > 0) {
             const webContext = sources
-              .map(s => `- ${s.title}: ${s.snippet} (${s.url})`)
-              .join('\n');
-            groundedSystem += `\n\n## Web Context (use these sources to ground your answer)\n${webContext}`;
+              .map((s, i) => `[${i + 1}] ${s.title}\nURL: ${s.url}\n${s.snippet}`)
+              .join('\n\n');
+            groundedSystem += `\n\n## Live Web Sources (today: ${new Date().toISOString().slice(0, 10)})\n\n${webContext}\n\nIMPORTANT: Base your answer on these sources. Cite them inline using [1], [2], [3] notation where relevant. Do not invent facts not supported by these sources.`;
           }
 
           const chatMessages: { role: 'user' | 'assistant'; content: string }[] = [
