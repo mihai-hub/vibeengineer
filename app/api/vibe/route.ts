@@ -264,7 +264,7 @@ export async function POST(req: Request): Promise<Response> {
               ...(jeffKey ? { Authorization: `Bearer ${jeffKey}` } : {}),
             },
             body: JSON.stringify({
-              messages: [{ role: 'user', content: `[VIBEENGINEER BUILD REQUEST]\n\n${message}` }],
+              messages: [{ role: 'user', content: `Use your write_file and run_command tools RIGHT NOW to code and run this. Do NOT start a background task — execute it immediately in this session:\n\n${message}` }],
               conversation_id: `vibe-${Date.now()}`,
             }),
           });
@@ -394,9 +394,8 @@ export async function POST(req: Request): Promise<Response> {
                   status: 'done',
                 } satisfies AgentStep,
               });
-            } else if (typeof parsed.content === 'string') {
-              enqueue({ type: 'token', text: parsed.content });
             }
+            // NOTE: no catch-all for parsed.content — causes duplication with token stream
           }
         }
 
