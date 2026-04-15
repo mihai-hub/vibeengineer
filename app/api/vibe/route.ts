@@ -257,15 +257,15 @@ export async function POST(req: Request): Promise<Response> {
 
         let jeffRes: Response;
         try {
-          jeffRes = await fetch(`${jeffUrl}/api/jeff/chat`, {
+          jeffRes = await fetch(`${jeffUrl}/chat/stream`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
               ...(jeffKey ? { Authorization: `Bearer ${jeffKey}` } : {}),
             },
             body: JSON.stringify({
-              message: `[VIBEENGINEER BUILD REQUEST]\n\n${message}`,
-              stream: true,
+              messages: [{ role: 'user', content: `[VIBEENGINEER BUILD REQUEST]\n\n${message}` }],
+              conversation_id: `vibe-${Date.now()}`,
             }),
           });
         } catch {
@@ -307,9 +307,11 @@ export async function POST(req: Request): Promise<Response> {
         }
 
         // ── Stream Jeff's SSE response back ───────────────────────────────
+        // Jeff uses `event: <name>\ndata: <json>` format — track event name
         const reader = jeffRes.body.getReader();
         const textDecoder = new TextDecoder();
         let buffer = '';
+        let currentEventName = '';
 
         while (true) {
           const { done, value } = await reader.read();
@@ -320,7 +322,14 @@ export async function POST(req: Request): Promise<Response> {
           buffer = lines.pop() ?? '';
 
           for (const line of lines) {
-            if (!line.startsWith('data: ')) continue;
+            if (line.startsWith('event: ')) {
+              currentEventName = line.slice(7).trim();
+              continue;
+            }
+            if (!line.startsWith('data: ')) {
+              if (line === '') currentEventName = ''; // blank line resets event
+              continue;
+            }
             const raw = line.slice(6).trim();
             if (!raw || raw === '[DONE]') continue;
 
@@ -328,12 +337,12 @@ export async function POST(req: Request): Promise<Response> {
             try {
               parsed = JSON.parse(raw) as Record<string, unknown>;
             } catch {
-              // Raw text token — forward as-is
               enqueue({ type: 'token', text: raw });
               continue;
             }
 
-            const eventType = parsed.type as string | undefined;
+            // Use SSE event name OR JSON type field
+            const eventType = currentEventName || (parsed.type as string | undefined) || '';
 
             if (eventType === 'tool_call') {
               enqueue({
@@ -341,7 +350,7 @@ export async function POST(req: Request): Promise<Response> {
                 step: {
                   id: String(parsed.id ?? `tool-${Date.now()}`),
                   type: 'tool_call',
-                  label: `${String(parsed.tool ?? 'tool')}(${String(parsed.input ?? '').slice(0, 80)})`,
+                  label: `${String(parsed.tool ?? 'tool')}(${JSON.stringify(parsed.args ?? parsed.input ?? '').slice(0, 80)})`,
                   status: 'running',
                 } satisfies AgentStep,
               });
@@ -349,10 +358,10 @@ export async function POST(req: Request): Promise<Response> {
               enqueue({
                 type: 'step',
                 step: {
-                  id: `result-${String(parsed.tool_use_id ?? Date.now())}`,
+                  id: `result-${String(parsed.tool ?? Date.now())}`,
                   type: 'tool_result',
-                  label: `${String(parsed.tool ?? 'tool')}(...)`,
-                  status: 'done',
+                  label: `${String(parsed.tool ?? 'tool')} → ${String(parsed.result_preview ?? parsed.ok ?? '')}`.slice(0, 80),
+                  status: parsed.ok === false ? 'error' : 'done',
                   durationMs: typeof parsed.duration_ms === 'number' ? parsed.duration_ms : undefined,
                 } satisfies AgentStep,
               });
@@ -368,13 +377,24 @@ export async function POST(req: Request): Promise<Response> {
                   durationMs: typeof parsed.duration_ms === 'number' ? parsed.duration_ms : undefined,
                 } satisfies AgentStep,
               });
-            } else if (eventType === 'token' || eventType === 'text') {
-              const text = typeof parsed.text === 'string' ? parsed.text : String(parsed.token ?? '');
-              enqueue({ type: 'token', text });
-            } else if (eventType === 'done') {
-              // pass through — we'll emit our own done below
+            } else if (eventType === 'token') {
+              // Jeff emits {token: "char"} — no type field in JSON
+              const text = typeof parsed.token === 'string' ? parsed.token
+                : typeof parsed.text === 'string' ? parsed.text : '';
+              if (text) enqueue({ type: 'token', text });
+            } else if (eventType === 'coding_complete' || eventType === 'agent_done') {
+              // Jeff finished — show summary step
+              const files = Array.isArray(parsed.files_modified) ? parsed.files_modified as string[] : [];
+              enqueue({
+                type: 'step',
+                step: {
+                  id: 'jeff-done',
+                  type: 'agent_done',
+                  label: files.length > 0 ? `Files: ${files.join(', ')}` : 'Jeff done',
+                  status: 'done',
+                } satisfies AgentStep,
+              });
             } else if (typeof parsed.content === 'string') {
-              // Unknown event with text content
               enqueue({ type: 'token', text: parsed.content });
             }
           }
