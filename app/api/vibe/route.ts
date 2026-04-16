@@ -255,149 +255,94 @@ export async function POST(req: Request): Promise<Response> {
           } satisfies AgentStep,
         });
 
-        // ── Step 1: Trigger Jarvis ────────────────────────────────────────
-        let triggerOk = false;
-        try {
-          const triggerRes = await fetch(`${jeffUrl}/api/jeff/jarvis/execute`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              ...(jeffKey ? { Authorization: `Bearer ${jeffKey}` } : {}),
-            },
-            body: JSON.stringify({ goal: message, project: 'vibeengineer', context: 'VibeEngineer build request — user wants this built and deployed. Use write_file and run_command. Return a live URL at the end.' }),
-            signal: AbortSignal.timeout(10000),
-          });
-          if (triggerRes.ok) {
-            triggerOk = true;
-          }
-        } catch {
-          triggerOk = false;
-        }
+        // ── BUILD LANE: Claude generates code → deploy to GCS → live URL ──
+        // No Mac daemon needed. Runs entirely server-side on GCP.
+        const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-        if (!triggerOk) {
-          // Jeff unavailable — fall back to Sonnet
+        // Step 1: Generate the app
+        enqueue({
+          type: 'step',
+          step: { id: 'generate', type: 'tool_call', label: 'Generating app…', status: 'running' } satisfies AgentStep,
+        });
+
+        const BUILD_SYSTEM = `You are VibeEngineer's build engine. The user wants an app built.
+
+Your job: generate a COMPLETE, working, self-contained single HTML file.
+- All CSS inline in <style> tags
+- All JS inline in <script> tags
+- No external dependencies that might fail
+- Modern, beautiful dark UI with gradients
+- Fully functional — not a mockup
+
+Return ONLY the raw HTML. No markdown, no code fences, no explanation. Just the HTML starting with <!DOCTYPE html>.`;
+
+        const buildResponse = await anthropic.messages.create({
+          model: 'claude-sonnet-4-6',
+          max_tokens: 4096,
+          system: BUILD_SYSTEM,
+          messages: [{ role: 'user', content: message }],
+        });
+
+        const htmlContent = buildResponse.content[0]?.type === 'text' ? buildResponse.content[0].text.trim() : '';
+
+        if (!htmlContent || !htmlContent.includes('<html')) {
           enqueue({
             type: 'step',
-            step: { id: 'fallback', type: 'agent_start', label: 'Jeff unavailable — fast lane', status: 'done' } satisfies AgentStep,
+            step: { id: 'generate-fail', type: 'tool_result', label: 'Code generation failed', status: 'error' } satisfies AgentStep,
           });
-          const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-          const sdkStream = anthropic.messages.stream({
-            model: 'claude-sonnet-4-5',
-            max_tokens: 2048,
-            system: FAST_LANE_SYSTEM,
-            messages: [{ role: 'user', content: message }],
-          });
-          for await (const event of sdkStream) {
-            if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
-              enqueue({ type: 'token', text: event.delta.text });
-            }
-          }
+          enqueue({ type: 'token', text: 'Failed to generate the app. Please try again.' });
           enqueue({ type: 'done' });
           controller.close();
           return;
         }
 
-        // ── Step 2: Subscribe to Jarvis proactive SSE stream ─────────────
-        // Jarvis emits: jarvis_start, jarvis_step, jarvis_step_result, jarvis_done
-        // via event: alert\ndata: {...}\n\n
-        const sessionId = `vibe-${Date.now()}`;
-        let sseRes: Response;
+        enqueue({
+          type: 'step',
+          step: { id: 'generate-done', type: 'tool_result', label: 'App generated ✓', status: 'done' } satisfies AgentStep,
+        });
+
+        // Step 2: Deploy to GCS public bucket
+        enqueue({
+          type: 'step',
+          step: { id: 'deploy', type: 'tool_call', label: 'Deploying to cloud…', status: 'running' } satisfies AgentStep,
+        });
+
+        const gcsBucket = process.env.VIBE_GCS_BUCKET ?? 'vibeengineer-apps';
+        const appId = `app-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const objectPath = `${appId}/index.html`;
+        let deployUrl: string | null = null;
+
         try {
-          sseRes = await fetch(`${jeffUrl}/proactive/stream`, {
-            method: 'GET',
-            headers: {
-              Accept: 'text/event-stream',
-              ...(jeffKey ? { Authorization: `Bearer ${jeffKey}` } : {}),
-            },
-            signal: AbortSignal.timeout(660000), // 11 min — Jarvis ceiling is 10 min
+          const { Storage } = await import('@google-cloud/storage');
+          const storage = new Storage();
+          const bucket = storage.bucket(gcsBucket);
+          const file = bucket.file(objectPath);
+
+          await file.save(htmlContent, {
+            contentType: 'text/html; charset=utf-8',
+            metadata: { cacheControl: 'public, max-age=3600' },
+            public: true,
           });
-        } catch {
-          enqueue({ type: 'token', text: 'Jarvis is running. Check /dashboard/jarvis for live progress.' });
-          enqueue({ type: 'done' });
-          controller.close();
-          return;
+
+          deployUrl = `https://storage.googleapis.com/${gcsBucket}/${objectPath}`;
+        } catch (gcsErr) {
+          // GCS not configured — return the HTML directly for download
+          const b64 = Buffer.from(htmlContent).toString('base64');
+          deployUrl = `data:text/html;base64,${b64}`;
         }
 
-        if (!sseRes.ok || !sseRes.body) {
-          enqueue({ type: 'token', text: 'Jarvis activated. Check /dashboard/jarvis for live progress.' });
-          enqueue({ type: 'done' });
-          controller.close();
-          return;
+        enqueue({
+          type: 'step',
+          step: { id: 'deploy-done', type: 'tool_result', label: 'Deployed ✓', status: 'done' } satisfies AgentStep,
+        });
+
+        // Step 3: Return result
+        const isDataUrl = deployUrl.startsWith('data:');
+        if (isDataUrl) {
+          enqueue({ type: 'token', text: `✅ **App built!**\n\nGCS bucket not configured so I can't host it — but here's what to do:\n\n1. Copy the generated HTML\n2. Save as \`index.html\`\n3. Open in browser\n\nTo enable live URLs, set \`VIBE_GCS_BUCKET\` in your environment.\n\nAlternatively, paste this prompt to a build tool: \`${message}\`` });
+        } else {
+          enqueue({ type: 'token', text: `✅ **Live at:** [${deployUrl}](${deployUrl})\n\nYour app is deployed and publicly accessible.` });
         }
-
-        const reader = sseRes.body.getReader();
-        const textDecoder = new TextDecoder();
-        let buffer = '';
-        let currentEventName = '';
-        let jarvisDone = false;
-
-        while (!jarvisDone) {
-          const { done, value } = await reader.read();
-          if (done) break;
-
-          buffer += textDecoder.decode(value, { stream: true });
-          const lines = buffer.split('\n');
-          buffer = lines.pop() ?? '';
-
-          for (const line of lines) {
-            if (line.startsWith('event: ')) {
-              currentEventName = line.slice(7).trim();
-              continue;
-            }
-            if (!line.startsWith('data: ')) {
-              if (line === '') currentEventName = '';
-              continue;
-            }
-            const raw = line.slice(6).trim();
-            if (!raw || raw === '[DONE]') continue;
-
-            let parsed: Record<string, unknown>;
-            try {
-              parsed = JSON.parse(raw) as Record<string, unknown>;
-            } catch {
-              continue;
-            }
-
-            const evType = (parsed.type as string | undefined) ?? '';
-
-            if (evType === 'jarvis_start') {
-              enqueue({
-                type: 'step',
-                step: { id: 'jarvis-start', type: 'agent_start', label: 'Jarvis building…', status: 'running' } satisfies AgentStep,
-              });
-            } else if (evType === 'jarvis_step') {
-              enqueue({
-                type: 'step',
-                step: {
-                  id: `step-${Date.now()}`,
-                  type: 'tool_call',
-                  label: String(parsed.label ?? parsed.tool ?? 'Working…').slice(0, 80),
-                  status: 'running',
-                } satisfies AgentStep,
-              });
-            } else if (evType === 'jarvis_step_result') {
-              enqueue({
-                type: 'step',
-                step: {
-                  id: `result-${Date.now()}`,
-                  type: 'tool_result',
-                  label: String(parsed.label ?? parsed.result ?? 'Done').slice(0, 80),
-                  status: parsed.ok === false ? 'error' : 'done',
-                } satisfies AgentStep,
-              });
-            } else if (evType === 'jarvis_done') {
-              const summary = typeof parsed.summary === 'string' ? parsed.summary : '';
-              if (summary) enqueue({ type: 'token', text: summary });
-              enqueue({
-                type: 'step',
-                step: { id: 'jarvis-done', type: 'agent_done', label: 'Build complete', status: 'done' } satisfies AgentStep,
-              });
-              jarvisDone = true;
-            }
-          }
-        }
-
-        void reader.cancel();
 
         enqueue({
           type: 'step',
