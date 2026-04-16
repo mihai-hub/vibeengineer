@@ -255,41 +255,31 @@ export async function POST(req: Request): Promise<Response> {
           } satisfies AgentStep,
         });
 
-        let jeffRes: Response;
+        // ── Step 1: Trigger Jarvis ────────────────────────────────────────
+        let triggerOk = false;
         try {
-          jeffRes = await fetch(`${jeffUrl}/chat/stream`, {
+          const triggerRes = await fetch(`${jeffUrl}/api/jeff/jarvis/execute`, {
             method: 'POST',
             headers: {
               'Content-Type': 'application/json',
               ...(jeffKey ? { Authorization: `Bearer ${jeffKey}` } : {}),
             },
-            body: JSON.stringify({
-              messages: [
-                {
-                  role: 'system',
-                  content: 'You are in IMMEDIATE EXECUTION MODE. You MUST use write_file and run_command tools directly in this conversation. DO NOT say "running as background task". DO NOT say "watch the live feed". DO NOT mention /dashboard/cto. Execute the task RIGHT NOW using your tools and return the result in this response.',
-                },
-                { role: 'user', content: message },
-              ],
-              conversation_id: `vibe-${Date.now()}`,
-            }),
+            body: JSON.stringify({ goal: message, project: 'vibeengineer', context: 'VibeEngineer build request — user wants this built and deployed. Use write_file and run_command. Return a live URL at the end.' }),
+            signal: AbortSignal.timeout(10000),
           });
+          if (triggerRes.ok) {
+            triggerOk = true;
+          }
         } catch {
-          jeffRes = new Response(null, { status: 503 });
+          triggerOk = false;
         }
 
-        if (!jeffRes.ok || !jeffRes.body) {
-          // Jeff backend unavailable — fall back to Sonnet
+        if (!triggerOk) {
+          // Jeff unavailable — fall back to Sonnet
           enqueue({
             type: 'step',
-            step: {
-              id: 'fallback',
-              type: 'agent_start',
-              label: 'Jeff backend unavailable — using fast lane',
-              status: 'done',
-            } satisfies AgentStep,
+            step: { id: 'fallback', type: 'agent_start', label: 'Jeff unavailable — fast lane', status: 'done' } satisfies AgentStep,
           });
-
           const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
           const sdkStream = anthropic.messages.stream({
             model: 'claude-sonnet-4-5',
@@ -297,29 +287,51 @@ export async function POST(req: Request): Promise<Response> {
             system: FAST_LANE_SYSTEM,
             messages: [{ role: 'user', content: message }],
           });
-
           for await (const event of sdkStream) {
-            if (
-              event.type === 'content_block_delta' &&
-              event.delta.type === 'text_delta'
-            ) {
+            if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
               enqueue({ type: 'token', text: event.delta.text });
             }
           }
-
           enqueue({ type: 'done' });
           controller.close();
           return;
         }
 
-        // ── Stream Jeff's SSE response back ───────────────────────────────
-        // Jeff uses `event: <name>\ndata: <json>` format — track event name
-        const reader = jeffRes.body.getReader();
+        // ── Step 2: Subscribe to Jarvis proactive SSE stream ─────────────
+        // Jarvis emits: jarvis_start, jarvis_step, jarvis_step_result, jarvis_done
+        // via event: alert\ndata: {...}\n\n
+        const sessionId = `vibe-${Date.now()}`;
+        let sseRes: Response;
+        try {
+          sseRes = await fetch(`${jeffUrl}/proactive/stream`, {
+            method: 'GET',
+            headers: {
+              Accept: 'text/event-stream',
+              ...(jeffKey ? { Authorization: `Bearer ${jeffKey}` } : {}),
+            },
+            signal: AbortSignal.timeout(660000), // 11 min — Jarvis ceiling is 10 min
+          });
+        } catch {
+          enqueue({ type: 'token', text: 'Jarvis is running. Check /dashboard/jarvis for live progress.' });
+          enqueue({ type: 'done' });
+          controller.close();
+          return;
+        }
+
+        if (!sseRes.ok || !sseRes.body) {
+          enqueue({ type: 'token', text: 'Jarvis activated. Check /dashboard/jarvis for live progress.' });
+          enqueue({ type: 'done' });
+          controller.close();
+          return;
+        }
+
+        const reader = sseRes.body.getReader();
         const textDecoder = new TextDecoder();
         let buffer = '';
         let currentEventName = '';
+        let jarvisDone = false;
 
-        while (true) {
+        while (!jarvisDone) {
           const { done, value } = await reader.read();
           if (done) break;
 
@@ -333,7 +345,7 @@ export async function POST(req: Request): Promise<Response> {
               continue;
             }
             if (!line.startsWith('data: ')) {
-              if (line === '') currentEventName = ''; // blank line resets event
+              if (line === '') currentEventName = '';
               continue;
             }
             const raw = line.slice(6).trim();
@@ -343,67 +355,49 @@ export async function POST(req: Request): Promise<Response> {
             try {
               parsed = JSON.parse(raw) as Record<string, unknown>;
             } catch {
-              enqueue({ type: 'token', text: raw });
               continue;
             }
 
-            // Use SSE event name OR JSON type field
-            const eventType = currentEventName || (parsed.type as string | undefined) || '';
+            const evType = (parsed.type as string | undefined) ?? '';
 
-            if (eventType === 'tool_call') {
+            if (evType === 'jarvis_start') {
+              enqueue({
+                type: 'step',
+                step: { id: 'jarvis-start', type: 'agent_start', label: 'Jarvis building…', status: 'running' } satisfies AgentStep,
+              });
+            } else if (evType === 'jarvis_step') {
               enqueue({
                 type: 'step',
                 step: {
-                  id: String(parsed.id ?? `tool-${Date.now()}`),
+                  id: `step-${Date.now()}`,
                   type: 'tool_call',
-                  label: `${String(parsed.tool ?? 'tool')}(${JSON.stringify(parsed.args ?? parsed.input ?? '').slice(0, 80)})`,
+                  label: String(parsed.label ?? parsed.tool ?? 'Working…').slice(0, 80),
                   status: 'running',
                 } satisfies AgentStep,
               });
-            } else if (eventType === 'tool_result') {
+            } else if (evType === 'jarvis_step_result') {
               enqueue({
                 type: 'step',
                 step: {
-                  id: `result-${String(parsed.tool ?? Date.now())}`,
+                  id: `result-${Date.now()}`,
                   type: 'tool_result',
-                  label: `${String(parsed.tool ?? 'tool')} → ${String(parsed.result_preview ?? parsed.ok ?? '')}`.slice(0, 80),
+                  label: String(parsed.label ?? parsed.result ?? 'Done').slice(0, 80),
                   status: parsed.ok === false ? 'error' : 'done',
-                  durationMs: typeof parsed.duration_ms === 'number' ? parsed.duration_ms : undefined,
                 } satisfies AgentStep,
               });
-            } else if (eventType === 'thinking') {
+            } else if (evType === 'jarvis_done') {
+              const summary = typeof parsed.summary === 'string' ? parsed.summary : '';
+              if (summary) enqueue({ type: 'token', text: summary });
               enqueue({
                 type: 'step',
-                step: {
-                  id: `think-${Date.now()}`,
-                  type: 'thinking',
-                  label: 'Thinking…',
-                  detail: typeof parsed.content === 'string' ? parsed.content : undefined,
-                  status: 'done',
-                  durationMs: typeof parsed.duration_ms === 'number' ? parsed.duration_ms : undefined,
-                } satisfies AgentStep,
+                step: { id: 'jarvis-done', type: 'agent_done', label: 'Build complete', status: 'done' } satisfies AgentStep,
               });
-            } else if (eventType === 'token') {
-              // Jeff emits {token: "char"} — no type field in JSON
-              const text = typeof parsed.token === 'string' ? parsed.token
-                : typeof parsed.text === 'string' ? parsed.text : '';
-              if (text) enqueue({ type: 'token', text });
-            } else if (eventType === 'coding_complete' || eventType === 'agent_done') {
-              // Jeff finished — show summary step
-              const files = Array.isArray(parsed.files_modified) ? parsed.files_modified as string[] : [];
-              enqueue({
-                type: 'step',
-                step: {
-                  id: 'jeff-done',
-                  type: 'agent_done',
-                  label: files.length > 0 ? `Files: ${files.join(', ')}` : 'Jeff done',
-                  status: 'done',
-                } satisfies AgentStep,
-              });
+              jarvisDone = true;
             }
-            // NOTE: no catch-all for parsed.content — causes duplication with token stream
           }
         }
+
+        void reader.cancel();
 
         enqueue({
           type: 'step',
