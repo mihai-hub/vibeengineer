@@ -321,8 +321,8 @@ Return ONLY the raw HTML. No markdown, no code fences, no explanation. Just the 
           await file.save(htmlContent, {
             contentType: 'text/html; charset=utf-8',
             metadata: { cacheControl: 'public, max-age=3600' },
-            public: true,
           });
+          await file.makePublic();
 
           deployUrl = `https://storage.googleapis.com/${gcsBucket}/${objectPath}`;
         } catch (gcsErr) {
