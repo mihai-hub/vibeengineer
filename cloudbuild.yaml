@@ -32,4 +32,4 @@ steps:
       - --max-instances=3
       - --memory=512Mi
       - --cpu=1
-      - --set-env-vars=NODE_ENV=production,JEFF_BACKEND_URL=https://api.jeff-asi.com,JEFF_API_KEY=47012794e687f62c3f36458391a22207
+      - --set-env-vars=NODE_ENV=production,JEFF_BACKEND_URL=https://api.jeff-asi.com,JEFF_API_KEY=47012794e687f62c3f36458391a22207,VIBE_GCS_BUCKET=vibeengineer-apps
