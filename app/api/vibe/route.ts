@@ -326,7 +326,8 @@ Return ONLY the raw HTML. No markdown, no code fences, no explanation. Just the 
 
           deployUrl = `https://storage.googleapis.com/${gcsBucket}/${objectPath}`;
         } catch (gcsErr) {
-          // GCS not configured — return the HTML directly for download
+          // Log the actual error so we can debug
+          console.error('[VibeEngineer] GCS upload failed:', gcsErr instanceof Error ? gcsErr.message : String(gcsErr));
           const b64 = Buffer.from(htmlContent).toString('base64');
           deployUrl = `data:text/html;base64,${b64}`;
         }
