@@ -264,7 +264,13 @@ export async function POST(req: Request): Promise<Response> {
               ...(jeffKey ? { Authorization: `Bearer ${jeffKey}` } : {}),
             },
             body: JSON.stringify({
-              messages: [{ role: 'user', content: `Use your write_file and run_command tools RIGHT NOW to code and run this. Do NOT start a background task — execute it immediately in this session:\n\n${message}` }],
+              messages: [
+                {
+                  role: 'system',
+                  content: 'You are in IMMEDIATE EXECUTION MODE. You MUST use write_file and run_command tools directly in this conversation. DO NOT say "running as background task". DO NOT say "watch the live feed". DO NOT mention /dashboard/cto. Execute the task RIGHT NOW using your tools and return the result in this response.',
+                },
+                { role: 'user', content: message },
+              ],
               conversation_id: `vibe-${Date.now()}`,
             }),
           });
