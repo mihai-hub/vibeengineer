@@ -8,7 +8,7 @@ interface Props {
 function parseInline(text: string): React.ReactNode[] {
   const parts: React.ReactNode[] = [];
   // Match **bold**, `code`
-  const regex = /(\*\*(.+?)\*\*|`([^`]+)`)/g;
+  const regex = /(\*\*(.+?)\*\*|`([^`]+)`|\[([^\]]+)\]\((https?:\/\/[^\)]+)\))/g;
   let last = 0;
   let match: RegExpExecArray | null;
 
@@ -23,6 +23,13 @@ function parseInline(text: string): React.ReactNode[] {
         <code key={match.index} className="rounded bg-violet-900/40 px-1.5 py-0.5 font-mono text-xs text-violet-300">
           {match[3]}
         </code>
+      );
+    } else if (match[0].startsWith('[')) {
+      parts.push(
+        <a key={match.index} href={match[5]} target="_blank" rel="noopener noreferrer"
+          className="text-cyan-400 underline underline-offset-2 hover:text-cyan-300">
+          {match[4]}
+        </a>
       );
     }
     last = match.index + match[0].length;
