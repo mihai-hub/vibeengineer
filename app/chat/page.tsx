@@ -114,6 +114,8 @@ function ChatInner() {
   const [currentAppFiles, setCurrentAppFiles] = useState<Record<string, string> | null>(null);
   const [previewOpen, setPreviewOpen] = useState(false);
   const [codeViewFile, setCodeViewFile] = useState<string | null>(null);
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [clarifyQuestion, setClarifyQuestion] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -206,6 +208,8 @@ function ChatInner() {
     setCurrentSources([]);
     setCurrentAppUrl(null);
     setPreviewOpen(false);
+    setSuggestions([]);
+    setClarifyQuestion(null);
     // Optimistic: show "Analysing…" immediately before first SSE event
     setAgentSteps([{
       id: 'init',
@@ -285,6 +289,11 @@ function ChatInner() {
             const files = evt.files as Record<string, string>;
             setCurrentAppFiles(files);
             setMessages(prev => prev.map((m, i) => i === prev.length - 1 ? { ...m, appFiles: files } : m));
+          } else if (evtType === 'suggestions') {
+            setSuggestions((evt.items as string[]) ?? []);
+          } else if (evtType === 'clarify') {
+            setClarifyQuestion((evt.question as string) ?? null);
+            setStreaming(false);
           } else if (evtType === 'error') {
             const errMsg = (evt.message as string) ?? 'Unknown error';
             setMessages(prev => prev.map((m, i) => i === prev.length - 1 ? { ...m, content: `⚠️ ${errMsg}` } : m));
@@ -338,6 +347,14 @@ function ChatInner() {
         <div className="flex items-center gap-2">
           {currentLane === 'fast' && <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium animate-pulse" style={{ background: 'rgba(250,204,21,0.12)', border: '1px solid rgba(250,204,21,0.3)', color: '#fbbf24' }}>⚡ Fast answer</div>}
           {currentLane === 'build' && <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium animate-pulse" style={{ background: 'rgba(6,182,212,0.12)', border: '1px solid rgba(6,182,212,0.3)', color: '#67e8f9' }}>🔨 Building…</div>}
+          {streaming && (
+            <button
+              onClick={() => { abortRef.current?.abort(); setStreaming(false); setCurrentLane(null); setAgentSteps(prev => prev.map(s => s.status === 'running' ? { ...s, status: 'done' } : s)); }}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-red-500/10 border border-red-500/30 text-red-400 hover:bg-red-500/20 transition"
+            >
+              ⬛ Stop
+            </button>
+          )}
           <div className="relative">
             <button onClick={() => setShowModePicker(p => !p)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 hover:border-zinc-600 text-xs text-zinc-300 transition-colors">
               <ModeIcon className="w-3.5 h-3.5" />{lockedMode ? cfg.label : 'Auto'}<ChevronDown className="w-3 h-3 opacity-50" />
@@ -465,6 +482,28 @@ function ChatInner() {
       </div>
       <div className="shrink-0 border-t border-zinc-800 bg-zinc-900 px-4 py-4">
         <div className="max-w-3xl mx-auto space-y-2">
+          {/* Clarify question banner */}
+          {clarifyQuestion && !streaming && (
+            <div className="flex items-start gap-2 px-3 py-2 rounded-xl bg-violet-500/10 border border-violet-500/30">
+              <span className="text-violet-400 text-xs shrink-0 mt-0.5">🤔</span>
+              <span className="text-violet-300 text-xs flex-1">{clarifyQuestion}</span>
+              <button onClick={() => setClarifyQuestion(null)} className="text-zinc-600 hover:text-zinc-400 text-xs">✕</button>
+            </div>
+          )}
+          {/* Suggestion chips */}
+          {suggestions.length > 0 && !streaming && (
+            <div className="flex flex-wrap gap-2">
+              {suggestions.map((s, i) => (
+                <button
+                  key={i}
+                  onClick={() => { setSuggestions([]); sendMessage(s); }}
+                  className="px-3 py-1.5 rounded-full text-xs bg-zinc-800 border border-zinc-700 text-zinc-300 hover:border-cyan-500/50 hover:text-cyan-400 hover:bg-cyan-500/5 transition"
+                >
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
           {mode === 'operate' && <div className="flex items-center gap-2"><Globe className="w-4 h-4 text-cyan-400 shrink-0" /><input type="url" value={urlInput} onChange={e => setUrlInput(e.target.value)} placeholder="https://example.com — URL to operate (optional)" className="flex-1 rounded-lg bg-zinc-800 border border-cyan-500/30 px-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-cyan-500/50" /></div>}
           <div className="flex items-end gap-3">
             <div className={`shrink-0 self-end mb-0.5 px-2 py-1 rounded-lg border text-[10px] font-medium flex items-center gap-1 ${cfg.accent}`}><ModeIcon className="w-3 h-3" />{cfg.label}</div>

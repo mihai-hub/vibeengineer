@@ -66,6 +66,23 @@ You are answering in FAST mode: give a direct, helpful, expert answer. Be concis
 
 Keep answers focused. If the user needs actual code written or files changed, let them know they can use a "build" command to trigger the build lane.`;
 
+const SUGGESTIONS_SYSTEM = `You are VibeEngineer. The user just had an app built. Suggest 3 short follow-up actions they might want next.
+Rules: each suggestion must be under 8 words, actionable, specific to the app. No bullet points, no numbering.
+Return ONLY valid JSON array of 3 strings: ["suggestion 1", "suggestion 2", "suggestion 3"]`;
+
+const CLARIFY_SYSTEM = `You are VibeEngineer. The user wants to build something but their request is vague or ambiguous.
+Ask ONE short, specific clarifying question (under 20 words) to understand what they need before building.
+Return ONLY the question, no preamble, no punctuation at the end.`;
+
+const VAGUE_PATTERNS = [
+  /^build (me )?an? app$/i,
+  /^build (me )?something$/i,
+  /^make (me )?an? (app|website|tool|thing)$/i,
+  /^create (me )?an? app$/i,
+  /^i want an? app$/i,
+  /^build (it|this)$/i,
+];
+
 // ── Web search grounding ───────────────────────────────────────────────────────
 async function fetchWebSources(query: string, anthropic: Anthropic): Promise<Source[]> {
   const serperKey = process.env.SERPER_API_KEY;
@@ -244,7 +261,26 @@ export async function POST(req: Request): Promise<Response> {
           return;
         }
 
-        // ── BUILD LANE: vibe-builder pipeline ─────────────────────────────
+        // ── BUILD LANE ────────────────────────────────────────────────────
+        // Vague request? Ask one clarifying question instead of guessing
+        const isVague = VAGUE_PATTERNS.some(p => p.test(message.trim()));
+        if (isVague) {
+          const anthropic2 = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+          const clarifyResp = await anthropic2.messages.create({
+            model: 'claude-haiku-4-5-20251001',
+            max_tokens: 80,
+            system: CLARIFY_SYSTEM,
+            messages: [{ role: 'user', content: message }],
+          });
+          const question = clarifyResp.content[0]?.type === 'text' ? clarifyResp.content[0].text.trim() : null;
+          if (question) {
+            enqueue({ type: 'clarify', question });
+            enqueue({ type: 'done' });
+            controller.close();
+            return;
+          }
+        }
+
         // Emit immediately so frontend clears "Analysing…" and shows build lane
         enqueue({
           type: 'step',
@@ -287,6 +323,24 @@ export async function POST(req: Request): Promise<Response> {
           type: 'step',
           step: { id: 'build-done', type: 'agent_done', label: 'Build complete', status: 'done' } satisfies AgentStep,
         });
+
+        // Generate follow-up suggestions (non-blocking — fire and forget into SSE)
+        try {
+          const anthropic3 = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+          const suggResp = await anthropic3.messages.create({
+            model: 'claude-haiku-4-5-20251001',
+            max_tokens: 120,
+            system: SUGGESTIONS_SYSTEM,
+            messages: [{ role: 'user', content: `App just built for: "${message}"` }],
+          });
+          const suggRaw = suggResp.content[0]?.type === 'text' ? suggResp.content[0].text.trim() : '[]';
+          const suggCleaned = suggRaw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+          const items = JSON.parse(suggCleaned) as string[];
+          if (Array.isArray(items) && items.length > 0) {
+            enqueue({ type: 'suggestions', items: items.slice(0, 3) });
+          }
+        } catch { /* ignore */ }
+
         enqueue({ type: 'done' });
         controller.close();
       } catch (err: unknown) {
