@@ -16,11 +16,13 @@ import Anthropic from '@anthropic-ai/sdk';
 import { Storage } from '@google-cloud/storage';
 
 export interface BuildProgress {
-  type: 'step' | 'token' | 'url';
+  type: 'step' | 'token' | 'url' | 'plan';
   label?: string;
   status?: 'running' | 'done' | 'error';
   text?: string;
   url?: string;
+  planItems?: string[];
+  stepType?: 'thinking' | 'plan' | 'tool_call' | 'tool_result' | 'agent_start' | 'agent_done' | 'security';
 }
 
 export type ProgressFn = (p: BuildProgress) => void;
@@ -162,6 +164,11 @@ async function buildInSandbox(
 
 // ── Code generation prompts ───────────────────────────────────────────────────
 
+const PLAN_SYSTEM = `You are VibeEngineer's planning engine. Given a build request, create a concise execution plan.
+Return JSON: { "title": "short app name", "strategy": "one sentence approach", "steps": ["step 1", "step 2", ...] }
+Steps should be 3-6 concrete actions (e.g. "Generate React component structure", "Add Tailwind styling", "Build and deploy to cloud").
+Return ONLY valid JSON. No markdown, no code fences.`;
+
 const HTML_SYSTEM = `You are VibeEngineer's build engine. Generate a COMPLETE, working, self-contained single HTML file.
 - All CSS inline in <style> tags
 - All JS inline in <script> tags
@@ -172,8 +179,15 @@ Return ONLY the raw HTML starting with <!DOCTYPE html>. No markdown, no code fen
 
 const REACT_SYSTEM = `You are VibeEngineer's build engine. Generate a complete Vite + React project.
 Return a JSON object with file paths as keys and file contents as values.
-Required files: package.json, index.html, src/main.jsx, src/App.jsx, src/App.css
+Required files: package.json, index.html, src/main.jsx, src/App.jsx, src/App.css, vite.config.js
 package.json must have: { "scripts": { "build": "vite build", "dev": "vite" }, "dependencies": { "react": "^18", "react-dom": "^18" }, "devDependencies": { "vite": "^5", "@vitejs/plugin-react": "^4" } }
+vite.config.js MUST include base: './' so the app works when hosted on a CDN or static host:
+\`\`\`
+import { defineConfig } from 'vite'
+import react from '@vitejs/plugin-react'
+export default defineConfig({ plugins: [react()], base: './' })
+\`\`\`
+index.html must use relative script path: <script type="module" src="./src/main.jsx"></script>
 Modern, beautiful, fully functional UI.
 Return ONLY valid JSON. No markdown, no code fences.`;
 
@@ -184,6 +198,35 @@ Return ONLY valid JSON. No markdown, no code fences.`;
 const MODIFY_SYSTEM = `You are VibeEngineer's build engine. Modify the existing code based on the user's request.
 Apply ONLY the requested changes. Keep everything else identical.
 Return ONLY the raw HTML starting with <!DOCTYPE html>. No markdown, no code fences.`;
+
+// ── Plan generation ───────────────────────────────────────────────────────────
+
+interface BuildPlan {
+  title: string;
+  strategy: string;
+  steps: string[];
+}
+
+async function generatePlan(message: string, anthropic: Anthropic): Promise<BuildPlan> {
+  try {
+    const resp = await anthropic.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 400,
+      system: PLAN_SYSTEM,
+      messages: [{ role: 'user', content: message }],
+    });
+    const raw = resp.content[0]?.type === 'text' ? resp.content[0].text.trim() : '{}';
+    const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+    const parsed = JSON.parse(cleaned) as Partial<BuildPlan>;
+    return {
+      title: parsed.title ?? 'App',
+      strategy: parsed.strategy ?? '',
+      steps: Array.isArray(parsed.steps) ? parsed.steps : [],
+    };
+  } catch {
+    return { title: 'App', strategy: '', steps: [] };
+  }
+}
 
 // ── Main build function ───────────────────────────────────────────────────────
 
@@ -249,6 +292,16 @@ async function buildHtmlApp(
   anthropic: Anthropic,
   onProgress: ProgressFn,
 ): Promise<void> {
+  // Generate and stream plan
+  const plan = await generatePlan(message, anthropic);
+  onProgress({
+    type: 'plan',
+    stepType: 'plan',
+    label: plan.title,
+    planItems: plan.strategy ? [plan.strategy, ...plan.steps] : plan.steps,
+    status: 'running',
+  });
+
   onProgress({ type: 'step', label: 'Generating app…', status: 'running' });
 
   const response = await anthropic.messages.create({
@@ -286,6 +339,16 @@ async function buildComplexApp(
   anthropic: Anthropic,
   onProgress: ProgressFn,
 ): Promise<void> {
+  // Generate and stream plan (parallel with nothing — fast Haiku call)
+  const plan = await generatePlan(message, anthropic);
+  onProgress({
+    type: 'plan',
+    stepType: 'plan',
+    label: plan.title,
+    planItems: plan.strategy ? [`Strategy: ${plan.strategy}`, ...plan.steps] : plan.steps,
+    status: 'running',
+  });
+
   onProgress({ type: 'step', label: 'Generating project…', status: 'running' });
 
   let projectFiles: Record<string, string> | null = null;
@@ -308,6 +371,19 @@ async function buildComplexApp(
     await buildHtmlApp(message, appId, anthropic, onProgress);
     return;
   }
+
+  // Always inject vite.config.js with base: './' so GCS-hosted apps load assets correctly
+  if (!projectFiles['vite.config.js'] && !projectFiles['vite.config.ts']) {
+    projectFiles['vite.config.js'] = `import { defineConfig } from 'vite'\nimport react from '@vitejs/plugin-react'\nexport default defineConfig({ plugins: [react()], base: './' })\n`;
+  } else {
+    // Patch existing vite config to ensure base: './' is present
+    const cfg = projectFiles['vite.config.js'] ?? projectFiles['vite.config.ts'] ?? '';
+    if (!cfg.includes("base:") && !cfg.includes("base :")) {
+      const key = projectFiles['vite.config.js'] ? 'vite.config.js' : 'vite.config.ts';
+      projectFiles[key] = cfg.replace('defineConfig({', "defineConfig({ base: './',");
+    }
+  }
+
   onProgress({ type: 'step', label: 'Project generated ✓', status: 'done' });
 
   // Auto-fix loop — up to 3 attempts

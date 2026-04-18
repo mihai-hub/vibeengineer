@@ -117,30 +117,46 @@ function ThinkingStep({ step }: { step: AgentStep }) {
   );
 }
 
-function PlanStep({ step }: { step: AgentStep }) {
+function PlanStep({ step, allSteps }: { step: AgentStep; allSteps?: AgentStep[] }) {
   const items = step.planItems ?? [];
+  // Count how many build steps are done to animate checklist ticking off
+  const doneCount = allSteps
+    ? allSteps.filter(s => s.type === 'tool_result' && s.status === 'done').length
+    : 0;
+
   return (
-    <div className="flex items-start gap-2">
-      <DotIndicator status={step.status} />
-      <div>
-        <span className="text-gray-300 text-xs font-medium">{step.label}</span>
-        {items.length > 0 && (
-          <ul className="mt-1 space-y-0.5">
-            {items.map((item, i) => (
-              <li key={i} className="flex items-start gap-1.5 text-xs text-gray-500">
-                <span className="flex-shrink-0 mt-px">
-                  {step.status === 'done' ? (
-                    <span className="text-gray-600">\u2715</span>
-                  ) : (
-                    <span className="text-gray-700">\u25a1</span>
-                  )}
-                </span>
-                <span>{item}</span>
-              </li>
-            ))}
-          </ul>
+    <div className="my-1 rounded-lg border border-gray-800/60 bg-black/20 p-2.5">
+      <div className="flex items-center gap-2 mb-2">
+        <DotIndicator status={step.status} />
+        <span className="text-cyan-400 text-xs font-semibold tracking-wide uppercase">{step.label}</span>
+        {step.status === 'running' && (
+          <span className="ml-auto text-gray-600 text-xs animate-pulse">planning…</span>
         )}
       </div>
+      {items.length > 0 && (
+        <ul className="space-y-1 pl-4">
+          {items.map((item, i) => {
+            const isDone = step.status === 'done' || i < doneCount;
+            const isStrategy = item.startsWith('Strategy:');
+            return (
+              <li key={i} className="flex items-start gap-2 text-xs">
+                {isStrategy ? (
+                  <span className="text-violet-400/80 italic">{item.replace('Strategy: ', '')}</span>
+                ) : (
+                  <>
+                    <span className={`flex-shrink-0 mt-0.5 font-mono ${isDone ? 'text-green-500' : 'text-gray-600'}`}>
+                      {isDone ? '\u2713' : '\u25a1'}
+                    </span>
+                    <span className={isDone ? 'text-gray-400 line-through decoration-gray-600' : 'text-gray-400'}>
+                      {item}
+                    </span>
+                  </>
+                )}
+              </li>
+            );
+          })}
+        </ul>
+      )}
     </div>
   );
 }
@@ -207,7 +223,7 @@ export function StepCard({ steps, isRunning, lane }: Props) {
       {laneBadge}
       {steps.map(step => {
         if (step.type === 'thinking') return <ThinkingStep key={step.id} step={step} />;
-        if (step.type === 'plan') return <PlanStep key={step.id} step={step} />;
+        if (step.type === 'plan') return <PlanStep key={step.id} step={step} allSteps={steps} />;
         if (step.type === 'agent_start') {
           return (
             <div key={step.id} className="flex items-center gap-2">

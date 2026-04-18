@@ -253,12 +253,24 @@ export async function POST(req: Request): Promise<Response> {
 
         let stepCounter = 0;
         await vibeBuild(message, conversationHistory, (progress) => {
-          if (progress.type === 'step') {
+          if (progress.type === 'plan') {
+            // Streaming plan card — shown before execution starts
+            enqueue({
+              type: 'step',
+              step: {
+                id: `plan-${stepCounter++}`,
+                type: 'plan',
+                label: progress.label ?? 'Plan',
+                status: progress.status ?? 'running',
+                planItems: progress.planItems,
+              } satisfies AgentStep,
+            });
+          } else if (progress.type === 'step') {
             enqueue({
               type: 'step',
               step: {
                 id: `step-${stepCounter++}`,
-                type: progress.status === 'error' ? 'tool_result' : progress.label?.includes('✓') ? 'tool_result' : 'tool_call',
+                type: progress.stepType ?? (progress.status === 'error' ? 'tool_result' : progress.label?.includes('✓') ? 'tool_result' : 'tool_call'),
                 label: progress.label ?? '',
                 status: progress.status ?? 'running',
               } satisfies AgentStep,
