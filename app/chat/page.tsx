@@ -17,6 +17,8 @@ interface Message {
   mode?: Mode;
   operateResult?: OperateResult | null;
   sources?: Source[];
+  appUrl?: string;
+  appFiles?: Record<string, string>;
 }
 
 interface OperateResult {
@@ -108,6 +110,10 @@ function ChatInner() {
   const [agentSteps, setAgentSteps] = useState<AgentStep[]>([]);
   const [currentSources, setCurrentSources] = useState<Source[]>([]);
   const [savedSkillFor, setSavedSkillFor] = useState<number | null>(null);
+  const [currentAppUrl, setCurrentAppUrl] = useState<string | null>(null);
+  const [currentAppFiles, setCurrentAppFiles] = useState<Record<string, string> | null>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
+  const [codeViewFile, setCodeViewFile] = useState<string | null>(null);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -198,6 +204,8 @@ function ChatInner() {
     setMessages([...newMessages, assistantPlaceholder]);
     setCurrentLane(null);
     setCurrentSources([]);
+    setCurrentAppUrl(null);
+    setPreviewOpen(false);
     // Optimistic: show "Analysing…" immediately before first SSE event
     setAgentSteps([{
       id: 'init',
@@ -214,7 +222,7 @@ function ChatInner() {
       const res = await fetch('/api/vibe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, conversationHistory }),
+        body: JSON.stringify({ message: text, conversationHistory, existingFiles: currentAppFiles ?? undefined }),
         signal: abortRef.current.signal,
       });
       if (!res.ok || !res.body) throw new Error(`API error ${res.status}`);
@@ -269,6 +277,14 @@ function ChatInner() {
             const tokenText = (evt.text as string) ?? '';
             assistantContent += tokenText;
             setMessages(prev => prev.map((m, i) => i === prev.length - 1 ? { ...m, content: assistantContent } : m));
+          } else if (evtType === 'app_url') {
+            const appUrl = evt.url as string;
+            setCurrentAppUrl(appUrl);
+            setPreviewOpen(true);
+          } else if (evtType === 'app_code') {
+            const files = evt.files as Record<string, string>;
+            setCurrentAppFiles(files);
+            setMessages(prev => prev.map((m, i) => i === prev.length - 1 ? { ...m, appFiles: files } : m));
           } else if (evtType === 'error') {
             const errMsg = (evt.message as string) ?? 'Unknown error';
             setMessages(prev => prev.map((m, i) => i === prev.length - 1 ? { ...m, content: `⚠️ ${errMsg}` } : m));
@@ -280,7 +296,7 @@ function ChatInner() {
           }
         }
       }
-      setMessages(prev => prev.map((m, i) => i === prev.length - 1 ? { ...m, content: assistantContent, sources: sourcesForMessage } : m));
+      setMessages(prev => prev.map((m, i) => i === prev.length - 1 ? { ...m, content: assistantContent, sources: sourcesForMessage, appUrl: currentAppUrl ?? undefined } : m));
     } catch (err: unknown) {
       if (err instanceof Error && err.name === 'AbortError') return;
       const errMsg = err instanceof Error ? err.message : 'Something went wrong.';
@@ -362,6 +378,68 @@ function ChatInner() {
                   </div>
 
                   {msg.role === 'assistant' && msg.sources && msg.sources.length > 0 && <Sources sources={msg.sources} />}
+
+                  {/* Inline app preview */}
+                  {msg.role === 'assistant' && msg.appUrl && (
+                    <div className="mt-2 rounded-xl overflow-hidden border border-zinc-700/60 bg-zinc-900">
+                      <div className="flex items-center justify-between px-3 py-1.5 bg-zinc-800/80 border-b border-zinc-700/60">
+                        <div className="flex items-center gap-1.5">
+                          <span className="w-2.5 h-2.5 rounded-full bg-red-500/70" />
+                          <span className="w-2.5 h-2.5 rounded-full bg-yellow-500/70" />
+                          <span className="w-2.5 h-2.5 rounded-full bg-green-500/70" />
+                          <span className="ml-2 text-xs text-zinc-500 font-mono truncate max-w-[200px]">{msg.appUrl.replace('https://storage.googleapis.com/', '')}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {msg.appFiles && (
+                            <button
+                              onClick={() => setCodeViewFile(codeViewFile ? null : Object.keys(msg.appFiles!)[0] ?? null)}
+                              className="text-[10px] text-zinc-400 hover:text-cyan-400 transition px-1.5 py-0.5 rounded bg-zinc-700/50 hover:bg-zinc-700"
+                            >
+                              {codeViewFile ? 'Hide code' : '{ } Code'}
+                            </button>
+                          )}
+                          <a href={msg.appUrl} target="_blank" rel="noreferrer" className="text-[10px] text-zinc-400 hover:text-cyan-400 transition px-1.5 py-0.5 rounded bg-zinc-700/50 hover:bg-zinc-700">
+                            ↗ Open
+                          </a>
+                        </div>
+                      </div>
+                      {i === messages.length - 1 && previewOpen || (i < messages.length - 1 && msg.appUrl) ? (
+                        <iframe
+                          src={msg.appUrl}
+                          className="w-full"
+                          style={{ height: '420px', border: 'none' }}
+                          sandbox="allow-scripts allow-same-origin"
+                          title="App preview"
+                        />
+                      ) : (
+                        <button
+                          onClick={() => setPreviewOpen(true)}
+                          className="w-full py-8 text-xs text-zinc-500 hover:text-cyan-400 transition text-center"
+                        >
+                          Click to load preview
+                        </button>
+                      )}
+                      {/* Code view */}
+                      {codeViewFile && msg.appFiles && (
+                        <div className="border-t border-zinc-700/60">
+                          <div className="flex overflow-x-auto bg-zinc-800/60 px-2 py-1 gap-1">
+                            {Object.keys(msg.appFiles).map(f => (
+                              <button
+                                key={f}
+                                onClick={() => setCodeViewFile(f)}
+                                className={`text-[10px] px-2 py-0.5 rounded whitespace-nowrap transition ${codeViewFile === f ? 'bg-cyan-500/20 text-cyan-400' : 'text-zinc-500 hover:text-zinc-300'}`}
+                              >
+                                {f.split('/').pop()}
+                              </button>
+                            ))}
+                          </div>
+                          <pre className="p-3 text-[11px] text-zinc-300 font-mono overflow-auto max-h-60 bg-black/40 whitespace-pre-wrap break-all">
+                            {msg.appFiles[codeViewFile] ?? ''}
+                          </pre>
+                        </div>
+                      )}
+                    </div>
+                  )}
 
                   {msg.role === 'assistant' && i > 0 && !streaming && (
                     <div className="flex items-center gap-3">

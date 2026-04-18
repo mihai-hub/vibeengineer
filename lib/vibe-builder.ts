@@ -16,13 +16,14 @@ import Anthropic from '@anthropic-ai/sdk';
 import { Storage } from '@google-cloud/storage';
 
 export interface BuildProgress {
-  type: 'step' | 'token' | 'url' | 'plan';
+  type: 'step' | 'token' | 'url' | 'plan' | 'app_url' | 'app_code';
   label?: string;
   status?: 'running' | 'done' | 'error';
   text?: string;
   url?: string;
   planItems?: string[];
   stepType?: 'thinking' | 'plan' | 'tool_call' | 'tool_result' | 'agent_start' | 'agent_done' | 'security';
+  files?: Record<string, string>;
 }
 
 export type ProgressFn = (p: BuildProgress) => void;
@@ -239,39 +240,62 @@ export async function build(
   message: string,
   conversationHistory: { role: 'user' | 'assistant'; content: string }[],
   onProgress: ProgressFn,
+  existingFiles?: Record<string, string>,
 ): Promise<void> {
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const appId = `app-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
   // ── Check if this is a modification of existing code ──────────────────────
-  const existingCode = extractExistingCode(conversationHistory);
-  const isModification = existingCode !== null && isModifyRequest(message);
+  const isModification = existingFiles !== undefined && Object.keys(existingFiles).length > 0 && isModifyRequest(message);
 
-  if (isModification && existingCode) {
+  if (isModification && existingFiles) {
     onProgress({ type: 'step', label: 'Modifying existing app…', status: 'running' });
+
+    const isHtml = 'index.html' in existingFiles && Object.keys(existingFiles).length === 1;
+    const existingCode = isHtml ? existingFiles['index.html'] : JSON.stringify(existingFiles, null, 2);
+    const system = isHtml ? MODIFY_SYSTEM : `${FIX_SYSTEM}\nModify the code based on the user request. Return ALL files as JSON.`;
 
     const modifyResponse = await anthropic.messages.create({
       model: 'claude-sonnet-4-6',
-      max_tokens: 4096,
-      system: MODIFY_SYSTEM,
+      max_tokens: 8096,
+      system,
       messages: [
-        { role: 'user', content: `Existing code:\n\`\`\`html\n${existingCode}\n\`\`\`\n\nUser request: ${message}` },
+        { role: 'user', content: `Existing code:\n${existingCode}\n\nUser request: ${message}` },
       ],
     });
 
-    const html = modifyResponse.content[0]?.type === 'text' ? modifyResponse.content[0].text.trim() : '';
-    if (!html.includes('<html')) {
-      onProgress({ type: 'token', text: 'Failed to modify the app. Please try again.' });
-      return;
-    }
+    const raw = modifyResponse.content[0]?.type === 'text' ? modifyResponse.content[0].text.trim() : '';
     onProgress({ type: 'step', label: 'Modified ✓', status: 'done' });
-
     onProgress({ type: 'step', label: 'Deploying…', status: 'running' });
-    const url = await deployToGCS(html, appId);
-    onProgress({ type: 'step', label: 'Deployed ✓', status: 'done' });
 
+    let url: string | null = null;
+    if (isHtml) {
+      url = await deployToGCS(raw, appId);
+      if (url) {
+        onProgress({ type: 'app_url', url });
+        onProgress({ type: 'app_code', files: { 'index.html': raw } });
+      }
+    } else {
+      try {
+        const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+        const files = JSON.parse(cleaned) as Record<string, string>;
+        // Inject vite base
+        if (!files['vite.config.js'] && !files['vite.config.ts']) {
+          files['vite.config.js'] = `import { defineConfig } from 'vite'\nimport react from '@vitejs/plugin-react'\nexport default defineConfig({ plugins: [react()], base: './' })\n`;
+        }
+        const result = await buildInSandbox(files, (msg) => onProgress({ type: 'step', label: msg, status: 'running' }));
+        if (result.success && result.distFiles) {
+          url = await deployDirToGCS(result.distFiles, appId);
+          if (url) {
+            onProgress({ type: 'app_url', url });
+            onProgress({ type: 'app_code', files });
+          }
+        }
+      } catch { /* fall through */ }
+    }
+
+    onProgress({ type: 'step', label: 'Deployed ✓', status: 'done' });
     if (url) {
-      onProgress({ type: 'url', url });
       onProgress({ type: 'token', text: `✅ **Updated:** [Open app](${url})` });
     } else {
       onProgress({ type: 'token', text: `✅ App updated. GCS deploy failed — check env vars.` });
@@ -329,7 +353,8 @@ async function buildHtmlApp(
   onProgress({ type: 'step', label: 'Deployed ✓', status: 'done' });
 
   if (url) {
-    onProgress({ type: 'url', url });
+    onProgress({ type: 'app_url', url });
+    onProgress({ type: 'app_code', files: { 'index.html': html } });
     onProgress({ type: 'token', text: `✅ **Live at:** [Open app](${url})` });
   } else {
     onProgress({ type: 'token', text: '✅ App generated. GCS deploy failed — check VIBE_GCS_BUCKET env var.' });
@@ -423,7 +448,8 @@ async function buildComplexApp(
       onProgress({ type: 'step', label: 'Deployed ✓', status: 'done' });
 
       if (url) {
-        onProgress({ type: 'url', url });
+        onProgress({ type: 'app_url', url });
+        onProgress({ type: 'app_code', files: projectFiles! });
         onProgress({ type: 'token', text: `✅ **Live at:** [Open app](${url})` });
       } else {
         onProgress({ type: 'token', text: '✅ Build complete. Deploy failed — check GCS config.' });

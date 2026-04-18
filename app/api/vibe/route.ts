@@ -159,6 +159,7 @@ export async function POST(req: Request): Promise<Response> {
   let body: {
     message?: string;
     conversationHistory?: { role: 'user' | 'assistant'; content: string }[];
+    existingFiles?: Record<string, string>;
   };
 
   try {
@@ -167,7 +168,7 @@ export async function POST(req: Request): Promise<Response> {
     return new Response('Invalid JSON body', { status: 400 });
   }
 
-  const { message, conversationHistory = [] } = body;
+  const { message, conversationHistory = [], existingFiles } = body;
 
   if (!message?.trim()) {
     return new Response('message is required', { status: 400 });
@@ -252,8 +253,11 @@ export async function POST(req: Request): Promise<Response> {
 
         let stepCounter = 0;
         await vibeBuild(message, conversationHistory, (progress) => {
-          if (progress.type === 'plan') {
-            // Streaming plan card — shown before execution starts
+          if (progress.type === 'app_url') {
+            enqueue({ type: 'app_url', url: progress.url });
+          } else if (progress.type === 'app_code') {
+            enqueue({ type: 'app_code', files: progress.files });
+          } else if (progress.type === 'plan') {
             enqueue({
               type: 'step',
               step: {
@@ -277,8 +281,7 @@ export async function POST(req: Request): Promise<Response> {
           } else if (progress.type === 'token') {
             enqueue({ type: 'token', text: progress.text ?? '' });
           }
-          // url type: already embedded in token text as markdown link
-        });
+        }, existingFiles);
 
         enqueue({
           type: 'step',
