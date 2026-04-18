@@ -197,8 +197,14 @@ function ChatInner() {
     const assistantPlaceholder: Message = { role: 'assistant', content: '', mode: activeMode };
     setMessages([...newMessages, assistantPlaceholder]);
     setCurrentLane(null);
-    setAgentSteps([]);
     setCurrentSources([]);
+    // Optimistic: show "Analysing…" immediately before first SSE event
+    setAgentSteps([{
+      id: 'init',
+      type: 'thinking',
+      label: 'Analysing request…',
+      status: 'running',
+    }]);
 
     try {
       abortRef.current = new AbortController();
@@ -244,6 +250,8 @@ function ChatInner() {
           const evtType = evt.type as string | undefined;
 
           if (evtType === 'lane') {
+            // Remove the optimistic "Analysing…" step now that real events are flowing
+            setAgentSteps(prev => prev.filter(s => s.id !== 'init'));
             setCurrentLane((evt.lane as 'fast' | 'build') ?? null);
           } else if (evtType === 'sources') {
             sourcesForMessage = (evt.sources as Source[]) ?? [];
@@ -340,14 +348,16 @@ function ChatInner() {
                 <div className="flex flex-col gap-2 max-w-[85%]">
                   <div className={`rounded-2xl px-4 py-3 text-sm leading-relaxed ${msg.role === 'user' ? 'bg-violet-600 text-white rounded-tr-sm self-end' : 'bg-zinc-800/80 text-zinc-100 rounded-tl-sm'}`}>
                     {msg.role === 'assistant' ? (
-                      msg.content === '' && (streaming || operating) ? (
-                        <span className="flex items-center gap-2 text-zinc-400"><Loader2 className="w-3 h-3 animate-spin" /><span className="text-xs">{operating ? 'Operating…' : 'Thinking…'}</span></span>
-                      ) : (
-                        <>
-                          {i === messages.length - 1 && (currentLane || agentSteps.length > 0) && <StepCard steps={agentSteps} isRunning={streaming} lane={currentLane ?? undefined} />}
+                      <>
+                        {i === messages.length - 1 && (currentLane || agentSteps.length > 0) && (
+                          <StepCard steps={agentSteps} isRunning={streaming} lane={currentLane ?? undefined} />
+                        )}
+                        {msg.content === '' && agentSteps.length === 0 && (streaming || operating) ? (
+                          <span className="flex items-center gap-2 text-zinc-400"><Loader2 className="w-3 h-3 animate-spin" /><span className="text-xs">{operating ? 'Operating…' : 'Thinking…'}</span></span>
+                        ) : (
                           <MarkdownRenderer content={msg.content} />
-                        </>
-                      )
+                        )}
+                      </>
                     ) : <p className="whitespace-pre-wrap">{msg.content}</p>}
                   </div>
 

@@ -190,7 +190,8 @@ export async function POST(req: Request): Promise<Response> {
       };
 
       try {
-        // ── Step 1: Classify intent (single Haiku call) ──────────────────────
+        // ── Step 1: Classify intent ───────────────────────────────────────────
+        // Emit lane immediately so frontend can show the right badge
         const decision = await classifyIntent(message);
         enqueue({ type: 'lane', lane: decision.lane, intent: decision.intent });
 
@@ -243,12 +244,10 @@ export async function POST(req: Request): Promise<Response> {
         }
 
         // ── BUILD LANE: vibe-builder pipeline ─────────────────────────────
-        // Smart routing: HTML → GCS | React/complex → E2B sandbox → GCS
-        // Auto-fix: up to 3 attempts on error
-        // Iterative: detects modify requests, patches existing code
+        // Emit immediately so frontend clears "Analysing…" and shows build lane
         enqueue({
           type: 'step',
-          step: { id: 'build-start', type: 'agent_start', label: 'Jeff is on it…', status: 'running' } satisfies AgentStep,
+          step: { id: 'build-start', type: 'agent_start', label: 'Analysing request…', status: 'running' } satisfies AgentStep,
         });
 
         let stepCounter = 0;
