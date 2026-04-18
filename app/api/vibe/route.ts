@@ -74,6 +74,10 @@ const CLARIFY_SYSTEM = `You are VibeEngineer. The user wants to build something 
 Ask ONE short, specific clarifying question (under 20 words) to understand what they need before building.
 Return ONLY the question, no preamble, no punctuation at the end.`;
 
+const PLAN_SYSTEM_ROUTE = `You are VibeEngineer's planning engine. Given a build request, create a concise execution plan.
+Return JSON: { "title": "short app name (2-4 words)", "strategy": "one sentence tech approach", "steps": ["step 1", "step 2", "step 3", "step 4"] }
+Steps = 4 concrete build actions. Return ONLY valid JSON. No markdown, no code fences.`;
+
 const VAGUE_PATTERNS = [
   /^build (me )?an? app$/i,
   /^build (me )?something$/i,
@@ -172,11 +176,14 @@ async function fetchWebSources(query: string, anthropic: Anthropic): Promise<Sou
   return [];
 }
 
+const APPROVED_PREFIX = '__APPROVED__:';
+
 export async function POST(req: Request): Promise<Response> {
   let body: {
     message?: string;
     conversationHistory?: { role: 'user' | 'assistant'; content: string }[];
     existingFiles?: Record<string, string>;
+    skipPlanGate?: boolean;
   };
 
   try {
@@ -185,11 +192,18 @@ export async function POST(req: Request): Promise<Response> {
     return new Response('Invalid JSON body', { status: 400 });
   }
 
-  const { message, conversationHistory = [], existingFiles } = body;
+  const { message: rawMessage, conversationHistory = [], existingFiles, skipPlanGate } = body;
+
+  // Strip approval prefix if present
+  const isPreApproved = rawMessage?.startsWith(APPROVED_PREFIX) || skipPlanGate;
+  const message = rawMessage?.startsWith(APPROVED_PREFIX)
+    ? rawMessage.slice(APPROVED_PREFIX.length).trim()
+    : rawMessage;
 
   if (!message?.trim()) {
     return new Response('message is required', { status: 400 });
   }
+  const safeMessage = message.trim();
 
   // ── Security scan ──────────────────────────────────────────────────────────
   try {
@@ -209,86 +223,83 @@ export async function POST(req: Request): Promise<Response> {
 
       try {
         // ── Step 1: Classify intent ───────────────────────────────────────────
-        // Emit lane immediately so frontend can show the right badge
-        const decision = await classifyIntent(message);
+        const decision = await classifyIntent(safeMessage);
         enqueue({ type: 'lane', lane: decision.lane, intent: decision.intent });
 
         if (decision.lane === 'fast') {
-          // ── FAST LANE: Web search grounding → Stream Claude Sonnet ─────────
+          // ── FAST LANE ──────────────────────────────────────────────────────
           const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-          // Fetch sources (non-blocking — always emit even if empty)
           let sources: Source[] = [];
-          try {
-            sources = await fetchWebSources(message, anthropic);
-          } catch {
-            sources = [];
-          }
+          try { sources = await fetchWebSources(safeMessage, anthropic); } catch { sources = []; }
           enqueue({ type: 'sources', sources });
 
-          // Build grounded system prompt — inject sources so Claude answers FROM them
           let groundedSystem = FAST_LANE_SYSTEM;
           if (sources.length > 0) {
-            const webContext = sources
-              .map((s, i) => `[${i + 1}] ${s.title}\nURL: ${s.url}\n${s.snippet}`)
-              .join('\n\n');
-            groundedSystem += `\n\n## Live Web Sources (today: ${new Date().toISOString().slice(0, 10)})\n\n${webContext}\n\nIMPORTANT: Base your answer on these sources. Cite them inline using [1], [2], [3] notation where relevant. Do not invent facts not supported by these sources.`;
+            const webContext = sources.map((s, i) => `[${i + 1}] ${s.title}\nURL: ${s.url}\n${s.snippet}`).join('\n\n');
+            groundedSystem += `\n\n## Live Web Sources (today: ${new Date().toISOString().slice(0, 10)})\n\n${webContext}\n\nIMPORTANT: Base your answer on these sources. Cite them inline using [1], [2], [3] notation where relevant.`;
           }
 
           const chatMessages: { role: 'user' | 'assistant'; content: string }[] = [
             ...conversationHistory,
-            { role: 'user', content: message },
+            { role: 'user', content: safeMessage },
           ];
-
-          const sdkStream = anthropic.messages.stream({
-            model: 'claude-sonnet-4-5',
-            max_tokens: 1024,
-            system: groundedSystem,
-            messages: chatMessages,
-          });
-
+          const sdkStream = anthropic.messages.stream({ model: 'claude-sonnet-4-5', max_tokens: 1024, system: groundedSystem, messages: chatMessages });
           for await (const event of sdkStream) {
-            if (
-              event.type === 'content_block_delta' &&
-              event.delta.type === 'text_delta'
-            ) {
+            if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
               enqueue({ type: 'token', text: event.delta.text });
             }
           }
-
           enqueue({ type: 'done' });
           controller.close();
           return;
         }
 
-        // ── BUILD LANE ────────────────────────────────────────────────────
-        // Vague request? Ask one clarifying question instead of guessing
-        const isVague = VAGUE_PATTERNS.some(p => p.test(message.trim()));
-        if (isVague) {
-          const anthropic2 = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-          const clarifyResp = await anthropic2.messages.create({
-            model: 'claude-haiku-4-5-20251001',
-            max_tokens: 80,
-            system: CLARIFY_SYSTEM,
-            messages: [{ role: 'user', content: message }],
+        // ── BUILD LANE ────────────────────────────────────────────────────────
+        const haikuClient = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+        // Gate 1: Vague request → clarify
+        const isVague = VAGUE_PATTERNS.some(p => p.test(safeMessage));
+        if (isVague && !isPreApproved) {
+          const clarifyResp = await haikuClient.messages.create({
+            model: 'claude-haiku-4-5-20251001', max_tokens: 80, system: CLARIFY_SYSTEM,
+            messages: [{ role: 'user', content: safeMessage }],
           });
           const question = clarifyResp.content[0]?.type === 'text' ? clarifyResp.content[0].text.trim() : null;
-          if (question) {
-            enqueue({ type: 'clarify', question });
+          if (question) { enqueue({ type: 'clarify', question }); enqueue({ type: 'done' }); controller.close(); return; }
+        }
+
+        // Gate 2: Plan approval — generate plan, show it, wait for user to approve
+        // Skip if: user pre-approved, this is a modify request, or existingFiles present
+        const hasExisting = existingFiles && Object.keys(existingFiles).length > 0;
+        if (!isPreApproved && !hasExisting) {
+          const planResp = await haikuClient.messages.create({
+            model: 'claude-haiku-4-5-20251001', max_tokens: 400, system: PLAN_SYSTEM_ROUTE,
+            messages: [{ role: 'user', content: safeMessage }],
+          });
+          const planRaw = planResp.content[0]?.type === 'text' ? planResp.content[0].text.trim() : '{}';
+          try {
+            const planCleaned = planRaw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+            const plan = JSON.parse(planCleaned) as { title?: string; strategy?: string; steps?: string[] };
+            enqueue({
+              type: 'plan_review',
+              plan: {
+                title: plan.title ?? 'App',
+                strategy: plan.strategy ?? '',
+                steps: plan.steps ?? [],
+                originalMessage: safeMessage,
+              },
+            });
             enqueue({ type: 'done' });
             controller.close();
             return;
-          }
+          } catch { /* plan parse failed — skip gate, build directly */ }
         }
 
-        // Emit immediately so frontend clears "Analysing…" and shows build lane
-        enqueue({
-          type: 'step',
-          step: { id: 'build-start', type: 'agent_start', label: 'Analysing request…', status: 'running' } satisfies AgentStep,
-        });
+        // Build
+        enqueue({ type: 'step', step: { id: 'build-start', type: 'agent_start', label: 'Building…', status: 'running' } satisfies AgentStep });
 
         let stepCounter = 0;
-        await vibeBuild(message, conversationHistory, (progress) => {
+        await vibeBuild(safeMessage, conversationHistory, (progress) => {
           if (progress.type === 'app_url') {
             enqueue({ type: 'app_url', url: progress.url });
           } else if (progress.type === 'app_code') {
@@ -331,7 +342,7 @@ export async function POST(req: Request): Promise<Response> {
             model: 'claude-haiku-4-5-20251001',
             max_tokens: 120,
             system: SUGGESTIONS_SYSTEM,
-            messages: [{ role: 'user', content: `App just built for: "${message}"` }],
+            messages: [{ role: 'user', content: `App just built for: "${safeMessage}"` }],
           });
           const suggRaw = suggResp.content[0]?.type === 'text' ? suggResp.content[0].text.trim() : '[]';
           const suggCleaned = suggRaw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();

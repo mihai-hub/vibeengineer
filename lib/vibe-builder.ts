@@ -178,6 +178,25 @@ const HTML_SYSTEM = `You are VibeEngineer's build engine. Generate a COMPLETE, w
 - Fully functional — not a mockup
 Return ONLY the raw HTML starting with <!DOCTYPE html>. No markdown, no code fences, no explanation.`;
 
+// Specialist subagent prompts — run in parallel, results merged
+const COMPONENT_AGENT = `You are a React component specialist. Given a build request, generate ONLY the React component files.
+Return JSON with keys: "src/App.jsx", "src/App.css", and any extra component files (e.g. "src/components/Card.jsx").
+Components must be self-contained with no external imports beyond react and react-dom.
+Use inline SVG for charts/icons. Return ONLY valid JSON. No markdown.`;
+
+const STRUCTURE_AGENT = `You are a React project structure specialist. Given a build request, generate ONLY the project config files.
+Return JSON with EXACTLY these keys: "package.json", "index.html", "vite.config.js".
+package.json: only react@^18, react-dom@^18 as deps; vite@^5, @vitejs/plugin-react@^4 as devDeps; scripts: {"build":"vite build","dev":"vite"}.
+vite.config.js: import { defineConfig } from 'vite'\nimport react from '@vitejs/plugin-react'\nexport default defineConfig({ plugins: [react()], base: './' })
+index.html: standard HTML5 with <script type="module" src="./src/main.jsx"></script> and title matching the app.
+Return ONLY valid JSON. No markdown.`;
+
+const ENTRYPOINT_AGENT = `You are a React entrypoint specialist. Generate ONLY src/main.jsx for a React 18 app.
+Return JSON with exactly one key: "src/main.jsx".
+Content: import React from 'react'; import ReactDOM from 'react-dom/client'; import App from './App.jsx'; import './App.css';
+ReactDOM.createRoot(document.getElementById('root')).render(<React.StrictMode><App /></React.StrictMode>);
+Adapt if the app needs special providers. Return ONLY valid JSON. No markdown.`;
+
 const REACT_SYSTEM = `You are VibeEngineer's build engine. Generate a complete Vite + React project.
 Return a JSON object with file paths as keys and file contents as values.
 Required files: package.json, index.html, src/main.jsx, src/App.jsx, src/App.css, vite.config.js
@@ -379,27 +398,43 @@ async function buildComplexApp(
     status: 'running',
   });
 
-  onProgress({ type: 'step', label: 'Generating project…', status: 'running' });
+  onProgress({ type: 'step', label: 'Spawning 3 specialist agents…', status: 'running' });
 
   let projectFiles: Record<string, string> | null = null;
 
-  // Generate project files
-  const genResponse = await anthropic.messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 8096,
-    system: REACT_SYSTEM,
-    messages: [{ role: 'user', content: message }],
-  });
+  // ── Parallel subagents — run all 3 simultaneously ─────────────────────────
+  const [compResp, structResp, entryResp] = await Promise.all([
+    anthropic.messages.create({ model: 'claude-sonnet-4-6', max_tokens: 6000, system: COMPONENT_AGENT, messages: [{ role: 'user', content: message }] }),
+    anthropic.messages.create({ model: 'claude-sonnet-4-6', max_tokens: 2000, system: STRUCTURE_AGENT, messages: [{ role: 'user', content: message }] }),
+    anthropic.messages.create({ model: 'claude-haiku-4-5-20251001', max_tokens: 500, system: ENTRYPOINT_AGENT, messages: [{ role: 'user', content: message }] }),
+  ]);
 
-  const raw = genResponse.content[0]?.type === 'text' ? genResponse.content[0].text.trim() : '';
-  try {
+  onProgress({ type: 'step', label: 'Agents done ✓ — merging files…', status: 'done' });
+
+  // Parse and merge all agent outputs
+  const parseJson = (resp: { content: { type: string; text?: string }[] }): Record<string, string> => {
+    const raw = resp.content[0]?.type === 'text' ? (resp.content[0].text ?? '').trim() : '';
     const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
-    projectFiles = JSON.parse(cleaned) as Record<string, string>;
-  } catch {
-    // JSON parse failed — fall back to HTML
-    onProgress({ type: 'step', label: 'Falling back to HTML…', status: 'running' });
-    await buildHtmlApp(message, appId, anthropic, onProgress);
-    return;
+    try { return JSON.parse(cleaned) as Record<string, string>; } catch { return {}; }
+  };
+
+  const merged = { ...parseJson(structResp), ...parseJson(entryResp), ...parseJson(compResp) };
+
+  if (Object.keys(merged).length < 3) {
+    // Parallel agents failed — fall back to single call
+    onProgress({ type: 'step', label: 'Falling back to single-agent…', status: 'running' });
+    const genResponse = await anthropic.messages.create({ model: 'claude-sonnet-4-6', max_tokens: 8096, system: REACT_SYSTEM, messages: [{ role: 'user', content: message }] });
+    const raw = genResponse.content[0]?.type === 'text' ? genResponse.content[0].text.trim() : '';
+    try {
+      const cleaned = raw.replace(/^```(?:json)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+      projectFiles = JSON.parse(cleaned) as Record<string, string>;
+    } catch {
+      onProgress({ type: 'step', label: 'Falling back to HTML…', status: 'running' });
+      await buildHtmlApp(message, appId, anthropic, onProgress);
+      return;
+    }
+  } else {
+    projectFiles = merged;
   }
 
   // Always inject vite.config.js with base: './' so GCS-hosted apps load assets correctly

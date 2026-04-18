@@ -116,6 +116,9 @@ function ChatInner() {
   const [codeViewFile, setCodeViewFile] = useState<string | null>(null);
   const [suggestions, setSuggestions] = useState<string[]>([]);
   const [clarifyQuestion, setClarifyQuestion] = useState<string | null>(null);
+  const [planReview, setPlanReview] = useState<{ title: string; strategy: string; steps: string[]; originalMessage: string } | null>(null);
+  const [projects, setProjects] = useState<{ id: string; name: string; url: string; files: Record<string, string>; createdAt: number }[]>([]);
+  const [showProjects, setShowProjects] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -124,6 +127,23 @@ function ChatInner() {
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
+
+  // Load projects from localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('vibe_projects');
+      if (saved) setProjects(JSON.parse(saved) as typeof projects);
+    } catch { /* ignore */ }
+  }, []);
+
+  const saveProject = (name: string, url: string, files: Record<string, string>) => {
+    const proj = { id: `proj-${Date.now()}`, name, url, files, createdAt: Date.now() };
+    setProjects(prev => {
+      const updated = [proj, ...prev].slice(0, 20); // keep last 20
+      try { localStorage.setItem('vibe_projects', JSON.stringify(updated)); } catch { /* ignore */ }
+      return updated;
+    });
+  };
 
   // Handle ?prompt= search param
   useEffect(() => {
@@ -210,6 +230,7 @@ function ChatInner() {
     setPreviewOpen(false);
     setSuggestions([]);
     setClarifyQuestion(null);
+    setPlanReview(null);
     // Optimistic: show "Analysing…" immediately before first SSE event
     setAgentSteps([{
       id: 'init',
@@ -289,6 +310,16 @@ function ChatInner() {
             const files = evt.files as Record<string, string>;
             setCurrentAppFiles(files);
             setMessages(prev => prev.map((m, i) => i === prev.length - 1 ? { ...m, appFiles: files } : m));
+            // Auto-save project — name derived from plan title or message
+            if (currentAppUrl) {
+              const name = text.slice(0, 40) || 'Untitled App';
+              saveProject(name, currentAppUrl, files);
+            }
+          } else if (evtType === 'plan_review') {
+            const plan = evt.plan as { title: string; strategy: string; steps: string[]; originalMessage: string };
+            setPlanReview(plan);
+            setAgentSteps([]);
+            setStreaming(false);
           } else if (evtType === 'suggestions') {
             setSuggestions((evt.items as string[]) ?? []);
           } else if (evtType === 'clarify') {
@@ -342,6 +373,50 @@ function ChatInner() {
           <div className="flex items-center gap-2">
             <span className={`w-2 h-2 rounded-full ${cfg.dot}`} />
             <span className="text-sm font-semibold text-white">VibeEngineer</span>
+          </div>
+          {/* Projects button */}
+          <div className="relative">
+            <button
+              onClick={() => setShowProjects(p => !p)}
+              className="flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-zinc-800 border border-zinc-700 hover:border-zinc-600 text-xs text-zinc-400 transition"
+            >
+              📁 Projects {projects.length > 0 && <span className="bg-cyan-500/20 text-cyan-400 rounded-full px-1.5 py-px text-[10px]">{projects.length}</span>}
+            </button>
+            {showProjects && (
+              <div className="absolute left-0 top-9 z-50 w-72 rounded-xl bg-zinc-900 border border-zinc-700 shadow-xl overflow-hidden">
+                <div className="px-3 py-2 border-b border-zinc-800 flex items-center justify-between">
+                  <span className="text-xs font-medium text-zinc-300">Saved Projects</span>
+                  <button onClick={() => setShowProjects(false)} className="text-zinc-600 hover:text-zinc-400 text-xs">✕</button>
+                </div>
+                {projects.length === 0 ? (
+                  <div className="px-3 py-4 text-xs text-zinc-600 text-center">No projects yet — build something!</div>
+                ) : (
+                  <div className="max-h-64 overflow-y-auto">
+                    {projects.map(p => (
+                      <button
+                        key={p.id}
+                        onClick={() => {
+                          setCurrentAppFiles(p.files);
+                          setCurrentAppUrl(p.url);
+                          setPreviewOpen(true);
+                          setShowProjects(false);
+                          setMessages(prev => [...prev, {
+                            role: 'assistant',
+                            content: `Loaded **${p.name}** — [Open app](${p.url})`,
+                            appUrl: p.url,
+                            appFiles: p.files,
+                          }]);
+                        }}
+                        className="w-full px-3 py-2.5 text-left hover:bg-zinc-800 transition border-b border-zinc-800/50 last:border-0"
+                      >
+                        <div className="text-xs text-zinc-200 truncate">{p.name}</div>
+                        <div className="text-[10px] text-zinc-600 mt-0.5">{new Date(p.createdAt).toLocaleDateString()}</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -482,6 +557,41 @@ function ChatInner() {
       </div>
       <div className="shrink-0 border-t border-zinc-800 bg-zinc-900 px-4 py-4">
         <div className="max-w-3xl mx-auto space-y-2">
+          {/* Plan review card */}
+          {planReview && !streaming && (
+            <div className="rounded-xl border border-cyan-500/30 bg-cyan-500/5 p-3 space-y-2">
+              <div className="flex items-center gap-2">
+                <span className="text-cyan-400 font-semibold text-xs">{planReview.title}</span>
+                <span className="text-zinc-600 text-xs">·</span>
+                <span className="text-violet-400/80 text-xs italic">{planReview.strategy}</span>
+              </div>
+              <ul className="space-y-1 pl-1">
+                {planReview.steps.map((s, i) => (
+                  <li key={i} className="flex items-center gap-2 text-xs text-zinc-400">
+                    <span className="text-zinc-600 font-mono">{i + 1}.</span>{s}
+                  </li>
+                ))}
+              </ul>
+              <div className="flex items-center gap-2 pt-1">
+                <button
+                  onClick={() => {
+                    setPlanReview(null);
+                    sendMessage(`__APPROVED__:${planReview.originalMessage}`);
+                  }}
+                  className="px-3 py-1.5 rounded-lg bg-cyan-500 hover:bg-cyan-400 text-black text-xs font-semibold transition"
+                >
+                  ▶ Build this
+                </button>
+                <button
+                  onClick={() => { setInput(`Change the plan: `); setPlanReview(null); textareaRef.current?.focus(); }}
+                  className="px-3 py-1.5 rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 text-xs transition border border-zinc-700"
+                >
+                  ✎ Steer
+                </button>
+                <button onClick={() => setPlanReview(null)} className="ml-auto text-zinc-600 hover:text-zinc-400 text-xs">Dismiss</button>
+              </div>
+            </div>
+          )}
           {/* Clarify question banner */}
           {clarifyQuestion && !streaming && (
             <div className="flex items-start gap-2 px-3 py-2 rounded-xl bg-violet-500/10 border border-violet-500/30">
