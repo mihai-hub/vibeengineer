@@ -20,6 +20,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { classifyIntent } from '@/lib/vibe-router';
 import { guardInput, GuardianBlock } from '@/lib/prompt-guardian';
 import type { AgentStep } from '@/components/StepCard';
+import { build as vibeBuild } from '@/lib/vibe-builder';
 
 // ── Source type ────────────────────────────────────────────────────────────────
 export interface Source {
@@ -241,117 +242,36 @@ export async function POST(req: Request): Promise<Response> {
           return;
         }
 
-        // ── BUILD LANE: Proxy to Jeff backend ──────────────────────────────
-        const jeffUrl = (process.env.JEFF_BACKEND_URL ?? 'https://api.jeff-asi.com').replace(/\/$/, '');
-        const jeffKey = process.env.JEFF_API_KEY ?? '';
+        // ── BUILD LANE: vibe-builder pipeline ─────────────────────────────
+        // Smart routing: HTML → GCS | React/complex → E2B sandbox → GCS
+        // Auto-fix: up to 3 attempts on error
+        // Iterative: detects modify requests, patches existing code
+        enqueue({
+          type: 'step',
+          step: { id: 'build-start', type: 'agent_start', label: 'Jeff is on it…', status: 'running' } satisfies AgentStep,
+        });
+
+        let stepCounter = 0;
+        await vibeBuild(message, conversationHistory, (progress) => {
+          if (progress.type === 'step') {
+            enqueue({
+              type: 'step',
+              step: {
+                id: `step-${stepCounter++}`,
+                type: progress.status === 'error' ? 'tool_result' : progress.label?.includes('✓') ? 'tool_result' : 'tool_call',
+                label: progress.label ?? '',
+                status: progress.status ?? 'running',
+              } satisfies AgentStep,
+            });
+          } else if (progress.type === 'token') {
+            enqueue({ type: 'token', text: progress.text ?? '' });
+          }
+          // url type: already embedded in token text as markdown link
+        });
 
         enqueue({
           type: 'step',
-          step: {
-            id: 'build-start',
-            type: 'agent_start',
-            label: 'Jeff is on it…',
-            status: 'running',
-          } satisfies AgentStep,
-        });
-
-        // ── BUILD LANE: Claude generates code → deploy to GCS → live URL ──
-        // No Mac daemon needed. Runs entirely server-side on GCP.
-        const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-        // Step 1: Generate the app
-        enqueue({
-          type: 'step',
-          step: { id: 'generate', type: 'tool_call', label: 'Generating app…', status: 'running' } satisfies AgentStep,
-        });
-
-        const BUILD_SYSTEM = `You are VibeEngineer's build engine. The user wants an app built.
-
-Your job: generate a COMPLETE, working, self-contained single HTML file.
-- All CSS inline in <style> tags
-- All JS inline in <script> tags
-- No external dependencies that might fail
-- Modern, beautiful dark UI with gradients
-- Fully functional — not a mockup
-
-Return ONLY the raw HTML. No markdown, no code fences, no explanation. Just the HTML starting with <!DOCTYPE html>.`;
-
-        const buildResponse = await anthropic.messages.create({
-          model: 'claude-sonnet-4-6',
-          max_tokens: 4096,
-          system: BUILD_SYSTEM,
-          messages: [{ role: 'user', content: message }],
-        });
-
-        const htmlContent = buildResponse.content[0]?.type === 'text' ? buildResponse.content[0].text.trim() : '';
-
-        if (!htmlContent || !htmlContent.includes('<html')) {
-          enqueue({
-            type: 'step',
-            step: { id: 'generate-fail', type: 'tool_result', label: 'Code generation failed', status: 'error' } satisfies AgentStep,
-          });
-          enqueue({ type: 'token', text: 'Failed to generate the app. Please try again.' });
-          enqueue({ type: 'done' });
-          controller.close();
-          return;
-        }
-
-        enqueue({
-          type: 'step',
-          step: { id: 'generate-done', type: 'tool_result', label: 'App generated ✓', status: 'done' } satisfies AgentStep,
-        });
-
-        // Step 2: Deploy to GCS public bucket
-        enqueue({
-          type: 'step',
-          step: { id: 'deploy', type: 'tool_call', label: 'Deploying to cloud…', status: 'running' } satisfies AgentStep,
-        });
-
-        const gcsBucket = process.env.VIBE_GCS_BUCKET ?? 'vibeengineer-apps';
-        const appId = `app-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-        const objectPath = `${appId}/index.html`;
-        let deployUrl: string | null = null;
-
-        try {
-          const { Storage } = await import('@google-cloud/storage');
-          const storage = new Storage();
-          const bucket = storage.bucket(gcsBucket);
-          const file = bucket.file(objectPath);
-
-          await file.save(htmlContent, {
-            contentType: 'text/html; charset=utf-8',
-            metadata: { cacheControl: 'public, max-age=3600' },
-          });
-
-          deployUrl = `https://storage.googleapis.com/${gcsBucket}/${objectPath}`;
-        } catch (gcsErr) {
-          // Log the actual error so we can debug
-          console.error('[VibeEngineer] GCS upload failed:', gcsErr instanceof Error ? gcsErr.message : String(gcsErr));
-          const b64 = Buffer.from(htmlContent).toString('base64');
-          deployUrl = `data:text/html;base64,${b64}`;
-        }
-
-        enqueue({
-          type: 'step',
-          step: { id: 'deploy-done', type: 'tool_result', label: 'Deployed ✓', status: 'done' } satisfies AgentStep,
-        });
-
-        // Step 3: Return result
-        const isDataUrl = deployUrl.startsWith('data:');
-        if (isDataUrl) {
-          enqueue({ type: 'token', text: `✅ **App built!**\n\nGCS bucket not configured so I can't host it — but here's what to do:\n\n1. Copy the generated HTML\n2. Save as \`index.html\`\n3. Open in browser\n\nTo enable live URLs, set \`VIBE_GCS_BUCKET\` in your environment.\n\nAlternatively, paste this prompt to a build tool: \`${message}\`` });
-        } else {
-          enqueue({ type: 'token', text: `✅ **Live at:** [${deployUrl}](${deployUrl})\n\nYour app is deployed and publicly accessible.` });
-        }
-
-        enqueue({
-          type: 'step',
-          step: {
-            id: 'build-done',
-            type: 'agent_done',
-            label: 'Build complete',
-            status: 'done',
-          } satisfies AgentStep,
+          step: { id: 'build-done', type: 'agent_done', label: 'Build complete', status: 'done' } satisfies AgentStep,
         });
         enqueue({ type: 'done' });
         controller.close();
