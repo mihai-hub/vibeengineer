@@ -180,15 +180,20 @@ Return ONLY the raw HTML starting with <!DOCTYPE html>. No markdown, no code fen
 const REACT_SYSTEM = `You are VibeEngineer's build engine. Generate a complete Vite + React project.
 Return a JSON object with file paths as keys and file contents as values.
 Required files: package.json, index.html, src/main.jsx, src/App.jsx, src/App.css, vite.config.js
-package.json must have: { "scripts": { "build": "vite build", "dev": "vite" }, "dependencies": { "react": "^18", "react-dom": "^18" }, "devDependencies": { "vite": "^5", "@vitejs/plugin-react": "^4" } }
-vite.config.js MUST include base: './' so the app works when hosted on a CDN or static host:
-\`\`\`
+
+CRITICAL RULES — follow exactly or the build will fail:
+1. package.json dependencies: ONLY react@^18, react-dom@^18. NO other npm packages (no recharts, no chart.js, no lodash, no axios, no tailwind, no external UI libs). Zero extra deps.
+2. For charts/graphs: use inline SVG or HTML5 Canvas with vanilla JS inside React components. Never import chart libraries.
+3. For icons: use Unicode chars or inline SVG. Never import icon libraries.
+4. For styling: use plain CSS in src/App.css. No Tailwind, no CSS-in-JS libs.
+5. vite.config.js MUST be exactly:
 import { defineConfig } from 'vite'
 import react from '@vitejs/plugin-react'
 export default defineConfig({ plugins: [react()], base: './' })
-\`\`\`
-index.html must use relative script path: <script type="module" src="./src/main.jsx"></script>
-Modern, beautiful, fully functional UI.
+6. index.html must use: <script type="module" src="./src/main.jsx"></script>
+7. devDependencies: ONLY vite@^5 and @vitejs/plugin-react@^4.
+
+Modern, beautiful, fully functional UI. Use dark backgrounds, vibrant accent colors.
 Return ONLY valid JSON. No markdown, no code fences.`;
 
 const FIX_SYSTEM = `You are a code debugger. Fix the build error and return corrected files.
@@ -484,17 +489,28 @@ function isModifyRequest(message: string): boolean {
 }
 
 function generateFallbackHtml(files: Record<string, string>): string {
-  // Extract App.jsx content and wrap in minimal HTML for preview
-  const appContent = files['src/App.jsx'] ?? files['src/App.tsx'] ?? '';
+  // Build failed — ask Claude to generate a self-contained HTML version instead
+  // Return a visible error page (not blank) so user knows what happened
+  const fileList = Object.keys(files).join(', ');
   return `<!DOCTYPE html>
 <html lang="en">
-<head><meta charset="UTF-8"><title>App</title>
-<style>body{font-family:system-ui,sans-serif;background:#0a0a0f;color:#fff;padding:2rem;}</style>
+<head><meta charset="UTF-8"><title>Build Error</title>
+<style>
+  *{box-sizing:border-box;margin:0;padding:0}
+  body{font-family:system-ui,sans-serif;background:#0a0a0f;color:#e4e4e7;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:2rem}
+  .card{max-width:500px;width:100%;background:#18181b;border:1px solid #3f3f46;border-radius:16px;padding:2rem}
+  h2{color:#f87171;font-size:1.1rem;margin-bottom:0.75rem}
+  p{color:#a1a1aa;font-size:0.875rem;line-height:1.6;margin-bottom:1rem}
+  .files{background:#09090b;border-radius:8px;padding:0.75rem;font-family:monospace;font-size:0.75rem;color:#6b7280;word-break:break-all}
+  .hint{margin-top:1rem;padding:0.75rem;background:#1c1917;border-left:3px solid #f59e0b;border-radius:0 8px 8px 0;font-size:0.8rem;color:#d97706}
+</style>
 </head>
 <body>
-<h2>App Preview</h2>
-<p>React build completed. Files generated:</p>
-<ul>${Object.keys(files).map(f => `<li>${f}</li>`).join('')}</ul>
-${appContent ? `<pre style="background:#1a1a2e;padding:1rem;border-radius:8px;overflow:auto;font-size:12px;max-height:400px">${appContent.slice(0, 2000)}</pre>` : ''}
+<div class="card">
+  <h2>⚠️ Build failed in sandbox</h2>
+  <p>The npm build encountered an error. This usually happens with complex dependencies.</p>
+  <div class="files">Files generated: ${fileList}</div>
+  <div class="hint">💡 Try rephrasing as "build me a [app] without external libraries" for reliable results.</div>
+</div>
 </body></html>`;
 }
