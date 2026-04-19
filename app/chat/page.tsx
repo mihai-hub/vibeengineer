@@ -138,6 +138,8 @@ function ChatInner() {
   const [buildMode, setBuildMode] = useState<'cdn' | 'real'>('cdn');
   const [activeFileView, setActiveFileView] = useState<string | null>(null);
   const [deployingTo, setDeployingTo] = useState<string | null>(null);
+  const [deployTokenInput, setDeployTokenInput] = useState('');
+  const [showDeployToken, setShowDeployToken] = useState<string | null>(null); // 'vercel' | 'github' | null
   const [businessContext, setBusinessContext] = useState<string | null>(null);
   const [showConnector, setShowConnector] = useState(false);
 
@@ -540,39 +542,75 @@ function ChatInner() {
                     <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-3 space-y-2">
                       <div className="text-xs font-medium text-emerald-400">📦 {Object.keys(msg.appFiles).length} files generated — deploy or download</div>
                       <div className="flex flex-wrap gap-2">
-                        <button
-                          onClick={async () => {
-                            setDeployingTo('vercel');
-                            try {
-                              const res = await fetch('/api/vibe/deploy', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ files: msg.appFiles, target: 'vercel', projectName: msg.content.slice(0, 30).replace(/[^a-z0-9]/gi, '-').toLowerCase() }) });
-                              const data = await res.json() as { url?: string; error?: string };
-                              if (data.url) { setCurrentAppUrl(data.url); lastAppUrlRef.current = data.url; setMessages(prev => prev.map((m2, i2) => i2 === i ? { ...m2, appUrl: data.url } : m2)); }
-                            } catch { /* ignore */ } finally { setDeployingTo(null); }
-                          }}
-                          disabled={deployingTo === 'vercel'}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-black border border-zinc-600 text-xs text-white hover:border-zinc-400 transition disabled:opacity-50"
-                        >
-                          {deployingTo === 'vercel' ? <Loader2 className="w-3 h-3 animate-spin" /> : '▲'} Deploy to Vercel
-                        </button>
-                        <button
-                          onClick={async () => {
-                            if (!msg.appFiles) return;
-                            const res = await fetch('/api/download', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ files: Object.entries(msg.appFiles).map(([path, content]) => ({ path, content })) }) });
-                            const blob = await res.blob();
-                            const url = URL.createObjectURL(blob);
-                            const a = document.createElement('a'); a.href = url; a.download = 'vibeengineer-app.zip'; a.click();
-                            URL.revokeObjectURL(url);
-                          }}
-                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-xs text-zinc-300 hover:text-white hover:border-zinc-500 transition"
-                        >
-                          <Download className="w-3 h-3" /> Download ZIP
-                        </button>
-                        {msg.githubUrl && (
-                          <a href={msg.githubUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-xs text-zinc-300 hover:text-white transition">
-                            🐙 View Repo
-                          </a>
+                        {/* Vercel deploy */}
+                        {showDeployToken === `vercel-${i}` ? (
+                          <div className="flex items-center gap-2 w-full">
+                            <input
+                              type="password"
+                              placeholder="Paste your Vercel token (vercel.com/account/tokens)"
+                              className="flex-1 rounded-lg bg-zinc-800 border border-zinc-600 px-3 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-cyan-500/50"
+                              value={deployTokenInput}
+                              onChange={e => setDeployTokenInput(e.target.value)}
+                            />
+                            <button
+                              onClick={async () => {
+                                if (!deployTokenInput || !msg.appFiles) return;
+                                setDeployingTo('vercel'); setShowDeployToken(null);
+                                try {
+                                  const res = await fetch('/api/vibe/deploy', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ files: msg.appFiles, target: 'vercel', projectName: msg.content.slice(0, 30).replace(/[^a-z0-9]/gi, '-').toLowerCase(), token: deployTokenInput }) });
+                                  const data = await res.json() as { url?: string; error?: string };
+                                  if (data.url) { setCurrentAppUrl(data.url); lastAppUrlRef.current = data.url!; setMessages(prev => prev.map((m2, i2) => i2 === i ? { ...m2, appUrl: data.url } : m2)); }
+                                } catch { /* ignore */ } finally { setDeployingTo(null); setDeployTokenInput(''); }
+                              }}
+                              disabled={!deployTokenInput || deployingTo === 'vercel'}
+                              className="px-3 py-1.5 rounded-lg bg-black border border-zinc-600 text-xs text-white hover:border-zinc-400 transition disabled:opacity-40"
+                            >{deployingTo === 'vercel' ? <Loader2 className="w-3 h-3 animate-spin inline" /> : 'Deploy ▲'}</button>
+                            <button onClick={() => { setShowDeployToken(null); setDeployTokenInput(''); }} className="text-zinc-600 hover:text-zinc-400 text-xs">✕</button>
+                          </div>
+                        ) : showDeployToken === `github-${i}` ? (
+                          <div className="flex items-center gap-2 w-full">
+                            <input
+                              type="password"
+                              placeholder="Paste your GitHub token (github.com/settings/tokens)"
+                              className="flex-1 rounded-lg bg-zinc-800 border border-zinc-600 px-3 py-1.5 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-cyan-500/50"
+                              value={deployTokenInput}
+                              onChange={e => setDeployTokenInput(e.target.value)}
+                            />
+                            <button
+                              onClick={async () => {
+                                if (!deployTokenInput || !msg.appFiles) return;
+                                setDeployingTo('github'); setShowDeployToken(null);
+                                try {
+                                  const res = await fetch('/api/vibe/deploy', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ files: msg.appFiles, target: 'github', projectName: msg.content.slice(0, 30).replace(/[^a-z0-9]/gi, '-').toLowerCase(), token: deployTokenInput }) });
+                                  const data = await res.json() as { url?: string; error?: string };
+                                  if (data.url) setMessages(prev => prev.map((m2, i2) => i2 === i ? { ...m2, githubUrl: data.url } : m2));
+                                } catch { /* ignore */ } finally { setDeployingTo(null); setDeployTokenInput(''); }
+                              }}
+                              disabled={!deployTokenInput || deployingTo === 'github'}
+                              className="px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-600 text-xs text-white hover:border-zinc-400 transition disabled:opacity-40"
+                            >{deployingTo === 'github' ? <Loader2 className="w-3 h-3 animate-spin inline" /> : 'Push 🐙'}</button>
+                            <button onClick={() => { setShowDeployToken(null); setDeployTokenInput(''); }} className="text-zinc-600 hover:text-zinc-400 text-xs">✕</button>
+                          </div>
+                        ) : (
+                          <>
+                            <button onClick={() => { setShowDeployToken(`vercel-${i}`); setDeployTokenInput(''); }} disabled={!!deployingTo} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-black border border-zinc-600 text-xs text-white hover:border-zinc-400 transition disabled:opacity-50">▲ Deploy to Vercel</button>
+                            <button onClick={() => { setShowDeployToken(`github-${i}`); setDeployTokenInput(''); }} disabled={!!deployingTo} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-xs text-zinc-300 hover:text-white hover:border-zinc-500 transition disabled:opacity-50">🐙 Push to GitHub</button>
+                            <button
+                              onClick={async () => {
+                                if (!msg.appFiles) return;
+                                const res = await fetch('/api/download', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ files: Object.entries(msg.appFiles).map(([path, content]) => ({ path, content })) }) });
+                                const blob = await res.blob();
+                                const url = URL.createObjectURL(blob);
+                                const a = document.createElement('a'); a.href = url; a.download = 'vibeengineer-app.zip'; a.click();
+                                URL.revokeObjectURL(url);
+                              }}
+                              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-xs text-zinc-300 hover:text-white hover:border-zinc-500 transition"
+                            ><Download className="w-3 h-3" /> Download ZIP</button>
+                            {msg.githubUrl && <a href={msg.githubUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-xs text-zinc-300 hover:text-white transition">🐙 View Repo</a>}
+                          </>
                         )}
                       </div>
+                      <p className="text-[10px] text-zinc-600">Your token is used once and never stored on our servers.</p>
                       <div className="flex flex-wrap gap-1 pt-1">
                         {Object.keys(msg.appFiles).slice(0, 8).map(f => (
                           <button key={f} onClick={() => setActiveFileView(activeFileView === f ? null : f)} className={`text-[10px] px-2 py-0.5 rounded font-mono transition ${activeFileView === f ? 'bg-cyan-500/20 text-cyan-400' : 'bg-zinc-800 text-zinc-500 hover:text-zinc-300'}`}>{f.split('/').pop()}</button>
