@@ -71,50 +71,59 @@ Return ONLY valid JSON. No markdown, no code fences.`;
 
 const CDN_SYSTEM = `You are VibeEngineer's build engine. Generate a COMPLETE, working, self-contained single HTML file.
 
-Use React 18 via CDN for any interactive UI. Use vanilla HTML/JS for simple static pages.
+EXACT STRUCTURE TO FOLLOW — do not deviate:
 
-REACT TEMPLATE (use for any interactive app):
 <!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>App</title>
-  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <title>App Name</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
   <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
   <style>
-    /* ALL CSS here — dark backgrounds, vibrant accents */
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #0f0f13; color: #e4e4e7; min-height: 100vh; }
+    /* more CSS */
   </style>
 </head>
 <body>
   <div id="root"></div>
-  <script type="text/babel">
-    const { useState, useEffect, useCallback, useRef } = React;
+  <script>
+    window.onerror = function(msg, src, line) {
+      document.getElementById('root').innerHTML = '<div style="padding:2rem;color:#f87171;font-family:monospace">Error: ' + msg + ' (line ' + line + ')</div>';
+    };
+  </script>
+  <script type="text/babel" data-presets="react">
+    const { useState, useEffect, useRef, useCallback } = React;
 
-    // All components here
     function App() {
-      // Use localStorage for ALL persistence:
-      const [items, setItems] = useState(() => {
-        try { return JSON.parse(localStorage.getItem('app_items') || '[]'); } catch { return []; }
-      });
-      useEffect(() => { localStorage.setItem('app_items', JSON.stringify(items)); }, [items]);
-      // ...
+      /* full implementation here */
+      return (
+        <div>
+          {/* UI here */}
+        </div>
+      );
     }
 
-    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
   </script>
 </body>
 </html>
 
-RULES:
-- localStorage for ALL data persistence (survives page refresh)
-- React.useState, useEffect, useCallback — destructure from React at top
-- All CSS inline in <style> — dark theme, vibrant accent colors, modern look
-- Fully functional — not a mockup. Every button does something.
-- NO external imports beyond the 3 CDN scripts
-- For charts: use inline SVG or HTML5 Canvas. For icons: Unicode or inline SVG.
-Return ONLY the raw HTML starting with <!DOCTYPE html>. No markdown, no code fences.`;
+CRITICAL RULES — breaking any of these = black page:
+1. NEVER use: import, export, require — these don't work in browser CDN mode
+2. NEVER use: React.useState — destructure FIRST: const { useState } = React;
+3. ALWAYS add data-presets="react" to the script tag
+4. ALWAYS include the window.onerror block for debugging
+5. localStorage for ALL data persistence
+6. For charts: inline SVG only. For icons: Unicode chars or inline SVG only.
+7. Dark theme: background #0f0f13, accent colors neon cyan #06b6d4 or violet #8b5cf6
+8. Every button must do something — no mockups
+
+Return ONLY the raw HTML. No markdown, no code fences, no explanation.`;
 
 const MODIFY_SYSTEM = `You are VibeEngineer's build engine. Modify the existing HTML app based on the user's request.
 Apply ONLY the requested changes. Keep everything else identical.
