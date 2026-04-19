@@ -21,6 +21,9 @@ import { classifyIntent } from '@/lib/vibe-router';
 import { guardInput, GuardianBlock } from '@/lib/prompt-guardian';
 import type { AgentStep } from '@/components/StepCard';
 import { build as vibeBuild, type BuildOptions } from '@/lib/vibe-builder';
+import { buildReal } from '@/lib/real-builder';
+import { deployToVercel } from '@/lib/vercel-deploy';
+import { pushToGitHub } from '@/lib/github-deploy';
 
 // ── Source type ────────────────────────────────────────────────────────────────
 export interface Source {
@@ -186,6 +189,7 @@ export async function POST(req: Request): Promise<Response> {
     skipPlanGate?: boolean;
     buildTier?: 'pro' | 'power';
     designMode?: boolean;
+    buildMode?: 'cdn' | 'real';
   };
 
   try {
@@ -194,7 +198,7 @@ export async function POST(req: Request): Promise<Response> {
     return new Response('Invalid JSON body', { status: 400 });
   }
 
-  const { message: rawMessage, conversationHistory = [], existingFiles, skipPlanGate, buildTier, designMode } = body;
+  const { message: rawMessage, conversationHistory = [], existingFiles, skipPlanGate, buildTier, designMode, buildMode } = body;
   const buildOptions: BuildOptions = { buildTier, designMode };
 
   // Strip approval prefix if present
@@ -305,36 +309,110 @@ export async function POST(req: Request): Promise<Response> {
         enqueue({ type: 'step', step: { id: 'build-start', type: 'agent_start', label: 'Building…', status: 'running' } satisfies AgentStep });
 
         let stepCounter = 0;
-        await vibeBuild(safeMessage, conversationHistory, (progress) => {
-          if (progress.type === 'app_url') {
-            enqueue({ type: 'app_url', url: progress.url });
-          } else if (progress.type === 'app_code') {
-            enqueue({ type: 'app_code', files: progress.files });
-          } else if (progress.type === 'plan') {
-            enqueue({
-              type: 'step',
-              step: {
-                id: `plan-${stepCounter++}`,
-                type: 'plan',
-                label: progress.label ?? 'Plan',
-                status: progress.status ?? 'running',
-                planItems: progress.planItems,
-              } satisfies AgentStep,
-            });
-          } else if (progress.type === 'step') {
-            enqueue({
-              type: 'step',
-              step: {
-                id: `step-${stepCounter++}`,
-                type: progress.stepType ?? (progress.status === 'error' ? 'tool_result' : progress.label?.includes('✓') ? 'tool_result' : 'tool_call'),
-                label: progress.label ?? '',
-                status: progress.status ?? 'running',
-              } satisfies AgentStep,
-            });
-          } else if (progress.type === 'token') {
-            enqueue({ type: 'token', text: progress.text ?? '' });
+
+        if (buildMode === 'real') {
+          // ── REAL BUILD (multi-file Next.js) ────────────────────────────────
+          const realModel = buildTier === 'power' ? 'claude-opus-4-6' : 'claude-sonnet-4-6';
+          let realFiles: Record<string, string> = {};
+
+          await buildReal(safeMessage, conversationHistory, (progress) => {
+            if (progress.type === 'files_ready') {
+              realFiles = progress.files ?? {};
+              enqueue({ type: 'app_code', files: realFiles });
+            } else if (progress.type === 'file') {
+              enqueue({ type: 'file_write', path: progress.filePath ?? '', content: progress.fileContent ?? '' });
+            } else if (progress.type === 'plan') {
+              enqueue({
+                type: 'step',
+                step: {
+                  id: `plan-${stepCounter++}`,
+                  type: 'plan',
+                  label: progress.label ?? 'Plan',
+                  status: progress.status ?? 'running',
+                  planItems: progress.planItems,
+                } satisfies AgentStep,
+              });
+            } else if (progress.type === 'step') {
+              enqueue({
+                type: 'step',
+                step: {
+                  id: `step-${stepCounter++}`,
+                  type: progress.stepType ?? (progress.status === 'error' ? 'tool_result' : progress.label?.includes('✓') ? 'tool_result' : 'tool_call'),
+                  label: progress.label ?? '',
+                  status: progress.status ?? 'running',
+                } satisfies AgentStep,
+              });
+            } else if (progress.type === 'token') {
+              enqueue({ type: 'token', text: progress.text ?? '' });
+            }
+          }, existingFiles, realModel);
+
+          // ── Optional: Push to GitHub ──────────────────────────────────────
+          if (Object.keys(realFiles).length > 0 && process.env.GITHUB_TOKEN) {
+            try {
+              enqueue({ type: 'deploy_status', status: 'deploying' });
+              const ghResult = await pushToGitHub(
+                realFiles,
+                safeMessage.slice(0, 40).replace(/\s+/g, '-').toLowerCase() || 'vibeengineer-app',
+                `Built by VibeEngineer: ${safeMessage.slice(0, 200)}`,
+              );
+              if (ghResult) {
+                enqueue({ type: 'github_url', url: ghResult.repoUrl });
+              }
+            } catch (ghErr) {
+              console.warn('[route] GitHub push failed:', ghErr instanceof Error ? ghErr.message : ghErr);
+            }
           }
-        }, existingFiles, buildOptions);
+
+          // ── Optional: Deploy to Vercel ────────────────────────────────────
+          if (Object.keys(realFiles).length > 0 && process.env.VERCEL_TOKEN) {
+            try {
+              enqueue({ type: 'deploy_status', status: 'deploying' });
+              const vercelUrl = await deployToVercel(
+                realFiles,
+                safeMessage.slice(0, 40).replace(/\s+/g, '-').toLowerCase() || 'vibeengineer-app',
+              );
+              if (vercelUrl) {
+                enqueue({ type: 'app_url', url: vercelUrl });
+                enqueue({ type: 'deploy_status', status: 'ready', url: vercelUrl });
+              }
+            } catch (vercelErr) {
+              console.warn('[route] Vercel deploy failed:', vercelErr instanceof Error ? vercelErr.message : vercelErr);
+            }
+          }
+        } else {
+          // ── CDN BUILD (single HTML file) ──────────────────────────────────
+          await vibeBuild(safeMessage, conversationHistory, (progress) => {
+            if (progress.type === 'app_url') {
+              enqueue({ type: 'app_url', url: progress.url });
+            } else if (progress.type === 'app_code') {
+              enqueue({ type: 'app_code', files: progress.files });
+            } else if (progress.type === 'plan') {
+              enqueue({
+                type: 'step',
+                step: {
+                  id: `plan-${stepCounter++}`,
+                  type: 'plan',
+                  label: progress.label ?? 'Plan',
+                  status: progress.status ?? 'running',
+                  planItems: progress.planItems,
+                } satisfies AgentStep,
+              });
+            } else if (progress.type === 'step') {
+              enqueue({
+                type: 'step',
+                step: {
+                  id: `step-${stepCounter++}`,
+                  type: progress.stepType ?? (progress.status === 'error' ? 'tool_result' : progress.label?.includes('✓') ? 'tool_result' : 'tool_call'),
+                  label: progress.label ?? '',
+                  status: progress.status ?? 'running',
+                } satisfies AgentStep,
+              });
+            } else if (progress.type === 'token') {
+              enqueue({ type: 'token', text: progress.text ?? '' });
+            }
+          }, existingFiles, buildOptions);
+        }
 
         enqueue({
           type: 'step',

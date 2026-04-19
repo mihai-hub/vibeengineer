@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, Suspense } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { Send, Loader2, Brain, Briefcase, Globe, ChevronDown, Zap, Check } from 'lucide-react';
+import { Send, Loader2, Brain, Briefcase, Globe, ChevronDown, Zap, Check, Download, Rocket, FileCode2, Database } from 'lucide-react';
 import MarkdownRenderer from '../../components/MarkdownRenderer';
 import { StepCard, AgentStep } from '../../components/StepCard';
 import Sources, { Source } from '../../components/Sources';
@@ -31,6 +31,8 @@ interface Message {
   sources?: Source[];
   appUrl?: string;
   appFiles?: Record<string, string>;
+  githubUrl?: string;
+  buildMode?: 'cdn' | 'real';
 }
 
 interface OperateResult {
@@ -133,6 +135,11 @@ function ChatInner() {
   const [showProjects, setShowProjects] = useState(false);
   const [buildTier, setBuildTier] = useState<'pro' | 'power'>('pro');
   const [designMode, setDesignMode] = useState(false);
+  const [buildMode, setBuildMode] = useState<'cdn' | 'real'>('cdn');
+  const [activeFileView, setActiveFileView] = useState<string | null>(null);
+  const [deployingTo, setDeployingTo] = useState<string | null>(null);
+  const [businessContext, setBusinessContext] = useState<string | null>(null);
+  const [showConnector, setShowConnector] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -270,11 +277,13 @@ function ChatInner() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: isApproved ? rawText : text,  // send prefix to backend for gate bypass
+          message: isApproved ? rawText : text,
           conversationHistory,
           existingFiles: currentAppFiles && isModifyIntent(text) ? currentAppFiles : undefined,
           buildTier,
           designMode,
+          buildMode,
+          businessContext: businessContext ?? undefined,
         }),
         signal: abortRef.current.signal,
       });
@@ -351,6 +360,23 @@ function ChatInner() {
             setPlanReview(plan);
             setAgentSteps([]);
             setStreaming(false);
+          } else if (evtType === 'github_url') {
+            const ghUrl = evt.url as string;
+            setMessages(prev => prev.map((m, i) => i === prev.length - 1 ? { ...m, githubUrl: ghUrl } : m));
+          } else if (evtType === 'file_write') {
+            const filePath = evt.path as string;
+            setAgentSteps(prev => {
+              const exists = prev.find(s => s.id === `file-${filePath}`);
+              if (exists) return prev;
+              return [...prev, { id: `file-${filePath}`, type: 'tool_call', label: `Write ${filePath}`, status: 'done' } as AgentStep];
+            });
+          } else if (evtType === 'deploy_status') {
+            const ds = evt as { status: string; url?: string };
+            if (ds.status === 'ready' && ds.url) {
+              setCurrentAppUrl(ds.url);
+              lastAppUrlRef.current = ds.url;
+              setMessages(prev => prev.map((m, i) => i === prev.length - 1 ? { ...m, appUrl: ds.url } : m));
+            }
           } else if (evtType === 'suggestions') {
             setSuggestions((evt.items as string[]) ?? []);
           } else if (evtType === 'clarify') {
@@ -502,6 +528,65 @@ function ChatInner() {
 
                   {msg.role === 'assistant' && msg.sources && msg.sources.length > 0 && <Sources sources={msg.sources} />}
 
+                  {/* GitHub link for real builds */}
+                  {msg.role === 'assistant' && msg.githubUrl && (
+                    <a href={msg.githubUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 hover:border-zinc-600 text-xs text-zinc-300 hover:text-white transition">
+                      🐙 View on GitHub
+                    </a>
+                  )}
+
+                  {/* Deploy panel for real builds with files but no live URL */}
+                  {msg.role === 'assistant' && msg.appFiles && !msg.appUrl && (
+                    <div className="rounded-xl border border-emerald-500/30 bg-emerald-500/5 p-3 space-y-2">
+                      <div className="text-xs font-medium text-emerald-400">📦 {Object.keys(msg.appFiles).length} files generated — deploy or download</div>
+                      <div className="flex flex-wrap gap-2">
+                        <button
+                          onClick={async () => {
+                            setDeployingTo('vercel');
+                            try {
+                              const res = await fetch('/api/vibe/deploy', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ files: msg.appFiles, target: 'vercel', projectName: msg.content.slice(0, 30).replace(/[^a-z0-9]/gi, '-').toLowerCase() }) });
+                              const data = await res.json() as { url?: string; error?: string };
+                              if (data.url) { setCurrentAppUrl(data.url); lastAppUrlRef.current = data.url; setMessages(prev => prev.map((m2, i2) => i2 === i ? { ...m2, appUrl: data.url } : m2)); }
+                            } catch { /* ignore */ } finally { setDeployingTo(null); }
+                          }}
+                          disabled={deployingTo === 'vercel'}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-black border border-zinc-600 text-xs text-white hover:border-zinc-400 transition disabled:opacity-50"
+                        >
+                          {deployingTo === 'vercel' ? <Loader2 className="w-3 h-3 animate-spin" /> : '▲'} Deploy to Vercel
+                        </button>
+                        <button
+                          onClick={async () => {
+                            if (!msg.appFiles) return;
+                            const res = await fetch('/api/download', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ files: Object.entries(msg.appFiles).map(([path, content]) => ({ path, content })) }) });
+                            const blob = await res.blob();
+                            const url = URL.createObjectURL(blob);
+                            const a = document.createElement('a'); a.href = url; a.download = 'vibeengineer-app.zip'; a.click();
+                            URL.revokeObjectURL(url);
+                          }}
+                          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-xs text-zinc-300 hover:text-white hover:border-zinc-500 transition"
+                        >
+                          <Download className="w-3 h-3" /> Download ZIP
+                        </button>
+                        {msg.githubUrl && (
+                          <a href={msg.githubUrl} target="_blank" rel="noreferrer" className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-zinc-800 border border-zinc-700 text-xs text-zinc-300 hover:text-white transition">
+                            🐙 View Repo
+                          </a>
+                        )}
+                      </div>
+                      <div className="flex flex-wrap gap-1 pt-1">
+                        {Object.keys(msg.appFiles).slice(0, 8).map(f => (
+                          <button key={f} onClick={() => setActiveFileView(activeFileView === f ? null : f)} className={`text-[10px] px-2 py-0.5 rounded font-mono transition ${activeFileView === f ? 'bg-cyan-500/20 text-cyan-400' : 'bg-zinc-800 text-zinc-500 hover:text-zinc-300'}`}>{f.split('/').pop()}</button>
+                        ))}
+                        {Object.keys(msg.appFiles).length > 8 && <span className="text-[10px] text-zinc-600 py-0.5">+{Object.keys(msg.appFiles).length - 8} more</span>}
+                      </div>
+                      {activeFileView && msg.appFiles[activeFileView] && (
+                        <pre className="mt-1 p-2 rounded-lg bg-black/40 text-[11px] text-zinc-300 font-mono overflow-auto max-h-48 whitespace-pre-wrap break-all border border-zinc-800">
+                          {msg.appFiles[activeFileView]}
+                        </pre>
+                      )}
+                    </div>
+                  )}
+
                   {/* Inline app preview */}
                   {msg.role === 'assistant' && msg.appUrl && (
                     <div className="mt-2 rounded-xl overflow-hidden border border-zinc-700/60 bg-zinc-900">
@@ -645,31 +730,49 @@ function ChatInner() {
               ))}
             </div>
           )}
-          {/* Build tier + Design mode toggles */}
+          {/* Build controls */}
           {mode !== 'operate' && (
             <div className="flex items-center gap-2 flex-wrap">
+              {/* Model tier */}
               <div className="flex items-center rounded-lg overflow-hidden border border-zinc-700 text-[11px]">
-                <button
-                  onClick={() => setBuildTier('pro')}
-                  className={`px-3 py-1.5 transition font-medium ${buildTier === 'pro' ? 'bg-violet-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}`}
-                >
-                  ⚡ Sonnet
-                </button>
-                <button
-                  onClick={() => setBuildTier('power')}
-                  className={`px-3 py-1.5 transition font-medium ${buildTier === 'power' ? 'bg-gradient-to-r from-cyan-600 to-violet-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}`}
-                >
-                  🔥 Opus Power
-                </button>
+                <button onClick={() => setBuildTier('pro')} className={`px-3 py-1.5 transition font-medium ${buildTier === 'pro' ? 'bg-violet-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}`}>⚡ Sonnet</button>
+                <button onClick={() => setBuildTier('power')} className={`px-3 py-1.5 transition font-medium ${buildTier === 'power' ? 'bg-gradient-to-r from-cyan-600 to-violet-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}`}>🔥 Opus</button>
               </div>
-              <button
-                onClick={() => setDesignMode(d => !d)}
-                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[11px] font-medium transition ${designMode ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400' : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-zinc-200'}`}
-              >
-                🎨 Design Mode{designMode ? ' ✓' : ''}
-              </button>
-              {buildTier === 'power' && <span className="text-[10px] text-cyan-500/70">Claude Opus 4.6 — best code quality</span>}
-              {designMode && <span className="text-[10px] text-emerald-500/70">Luxury UI generation</span>}
+              {/* Build mode */}
+              <div className="flex items-center rounded-lg overflow-hidden border border-zinc-700 text-[11px]">
+                <button onClick={() => setBuildMode('cdn')} className={`px-3 py-1.5 transition font-medium flex items-center gap-1 ${buildMode === 'cdn' ? 'bg-cyan-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}`}><FileCode2 className="w-3 h-3" />CDN</button>
+                <button onClick={() => setBuildMode('real')} className={`px-3 py-1.5 transition font-medium flex items-center gap-1 ${buildMode === 'real' ? 'bg-emerald-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}`}><Rocket className="w-3 h-3" />Real App</button>
+              </div>
+              {/* Design mode */}
+              <button onClick={() => setDesignMode(d => !d)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[11px] font-medium transition ${designMode ? 'bg-violet-500/15 border-violet-500/40 text-violet-400' : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-zinc-200'}`}>🎨{designMode ? ' Design ✓' : ' Design'}</button>
+              {/* Business data connector */}
+              <button onClick={() => setShowConnector(s => !s)} className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[11px] font-medium transition ${businessContext ? 'bg-orange-500/15 border-orange-500/40 text-orange-400' : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-zinc-200'}`}><Database className="w-3 h-3" />{businessContext ? 'Data ✓' : 'Connect Data'}</button>
+              {buildMode === 'real' && <span className="text-[10px] text-emerald-500/70">Next.js · TypeScript · Tailwind · deployable</span>}
+              {businessContext && <span className="text-[10px] text-orange-500/70">Business data injected</span>}
+            </div>
+          )}
+          {/* Business connector panel */}
+          {showConnector && (
+            <div className="rounded-xl border border-zinc-700 bg-zinc-900 p-3 space-y-2">
+              <div className="flex items-center justify-between">
+                <span className="text-xs font-medium text-zinc-300">Connect your business data</span>
+                <button onClick={() => setShowConnector(false)} className="text-zinc-600 hover:text-zinc-400 text-xs">✕</button>
+              </div>
+              <textarea
+                placeholder="Paste your product data, metrics, customer info, CSV, JSON — anything. Claude will use it to build tools specific to your business."
+                className="w-full h-24 rounded-lg bg-zinc-800 border border-zinc-700 px-3 py-2 text-xs text-white placeholder-zinc-600 resize-none focus:outline-none focus:border-cyan-500/50"
+                onChange={e => setBusinessContext(e.target.value || null)}
+                defaultValue={businessContext ?? ''}
+              />
+              <div className="flex items-center gap-2">
+                <button
+                  onClick={() => setShowConnector(false)}
+                  className="px-3 py-1.5 rounded-lg bg-cyan-600 hover:bg-cyan-500 text-white text-xs font-medium transition"
+                >
+                  Use in build ✓
+                </button>
+                <button onClick={() => { setBusinessContext(null); setShowConnector(false); }} className="text-zinc-600 hover:text-zinc-400 text-xs">Clear</button>
+              </div>
             </div>
           )}
           {mode === 'operate' && <div className="flex items-center gap-2"><Globe className="w-4 h-4 text-cyan-400 shrink-0" /><input type="url" value={urlInput} onChange={e => setUrlInput(e.target.value)} placeholder="https://example.com — URL to operate (optional)" className="flex-1 rounded-lg bg-zinc-800 border border-cyan-500/30 px-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-cyan-500/50" /></div>}
