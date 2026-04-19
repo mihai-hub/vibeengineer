@@ -14,7 +14,6 @@
     "@google/generative-ai": "^0.24.1",
     "@supabase/supabase-js": "^2.101.1",
     "@types/html2canvas": "^0.5.35",
-    "e2b": "^2.19.0",
     "html2canvas": "^1.4.1",
     "jszip": "^3.10.1",
     "lucide-react": "^1.7.0",
