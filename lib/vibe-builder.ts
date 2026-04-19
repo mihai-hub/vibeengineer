@@ -30,11 +30,21 @@ export type ProgressFn = (p: BuildProgress) => void;
 
 // ── Complexity detection ──────────────────────────────────────────────────────
 
-const COMPLEX_KEYWORDS = [
+// React keywords — use CDN-React path (no build step needed)
+const REACT_KEYWORDS = [
   'react', 'vue', 'angular', 'next.js', 'nextjs', 'svelte',
-  'node', 'express', 'fastapi', 'backend', 'api', 'database',
-  'typescript app', 'full stack', 'fullstack', 'multi-page',
 ];
+
+// Complex = needs E2B sandbox (Node backend, multi-file, database)
+const COMPLEX_KEYWORDS = [
+  'node', 'express', 'fastapi', 'backend', 'api server', 'database',
+  'full stack', 'fullstack', 'websocket', 'rest api',
+];
+
+export function isReactApp(message: string): boolean {
+  const lower = message.toLowerCase();
+  return REACT_KEYWORDS.some(k => lower.includes(k));
+}
 
 export function isComplexApp(message: string): boolean {
   const lower = message.toLowerCase();
@@ -169,6 +179,38 @@ const PLAN_SYSTEM = `You are VibeEngineer's planning engine. Given a build reque
 Return JSON: { "title": "short app name", "strategy": "one sentence approach", "steps": ["step 1", "step 2", ...] }
 Steps should be 3-6 concrete actions (e.g. "Generate React component structure", "Add Tailwind styling", "Build and deploy to cloud").
 Return ONLY valid JSON. No markdown, no code fences.`;
+
+const REACT_CDN_SYSTEM = `You are VibeEngineer's build engine. Generate a COMPLETE, working, self-contained single HTML file that uses React via CDN (no build step).
+
+REQUIRED structure:
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="UTF-8">
+  <title>App</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>/* all CSS here */</style>
+</head>
+<body>
+  <div id="root"></div>
+  <script type="text/babel">
+    // All React components here using React.useState, React.useEffect etc
+    // Use React.createElement OR JSX (Babel standalone will transpile)
+    function App() { ... }
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
+
+RULES:
+- Use React.useState, React.useEffect, React.useCallback (React is global)
+- localStorage works fine for persistence
+- All CSS inline in <style> tags — dark backgrounds, vibrant accents
+- Fully functional — not a mockup
+- NO external imports beyond the 3 CDN scripts above
+Return ONLY the raw HTML starting with <!DOCTYPE html>. No markdown, no code fences.`;
 
 const HTML_SYSTEM = `You are VibeEngineer's build engine. Generate a COMPLETE, working, self-contained single HTML file.
 - All CSS inline in <style> tags
@@ -322,7 +364,13 @@ export async function build(
     return;
   }
 
-  // ── Complex app (React/Node) ───────────────────────────────────────────────
+  // ── React app via CDN (no build step, always works) ──────────────────────
+  if (isReactApp(message)) {
+    await buildReactCdnApp(message, appId, anthropic, onProgress);
+    return;
+  }
+
+  // ── Complex app needing E2B sandbox (backend, database etc) ──────────────
   if (isComplexApp(message) && process.env.E2B_API_KEY) {
     await buildComplexApp(message, appId, anthropic, onProgress);
     return;
@@ -368,6 +416,57 @@ async function buildHtmlApp(
   onProgress({ type: 'step', label: 'App generated ✓', status: 'done' });
 
   onProgress({ type: 'step', label: 'Deploying to cloud…', status: 'running' });
+  const url = await deployToGCS(html, appId);
+  onProgress({ type: 'step', label: 'Deployed ✓', status: 'done' });
+
+  if (url) {
+    onProgress({ type: 'app_url', url });
+    onProgress({ type: 'app_code', files: { 'index.html': html } });
+    onProgress({ type: 'token', text: `✅ **Live at:** [Open app](${url})` });
+  } else {
+    onProgress({ type: 'token', text: '✅ App generated. GCS deploy failed — check VIBE_GCS_BUCKET env var.' });
+  }
+}
+
+// ── React CDN build (self-contained, no build step) ──────────────────────────
+
+async function buildReactCdnApp(
+  message: string,
+  appId: string,
+  anthropic: Anthropic,
+  onProgress: ProgressFn,
+): Promise<void> {
+  const plan = await generatePlan(message, anthropic);
+  onProgress({
+    type: 'plan',
+    stepType: 'plan',
+    label: plan.title,
+    planItems: plan.strategy ? [plan.strategy, ...plan.steps] : plan.steps,
+    status: 'running',
+  });
+
+  onProgress({ type: 'step', label: 'Generating React app…', status: 'running' });
+
+  const response = await anthropic.messages.create({
+    model: 'claude-sonnet-4-6',
+    max_tokens: 6000,
+    system: REACT_CDN_SYSTEM,
+    messages: [{ role: 'user', content: message }],
+  });
+
+  const raw = response.content[0]?.type === 'text' ? response.content[0].text.trim() : '';
+  // Strip any accidental code fences
+  const html = raw.replace(/^```(?:html)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+
+  if (!html.startsWith('<!DOCTYPE') && !html.startsWith('<html')) {
+    onProgress({ type: 'step', label: 'Generation failed', status: 'error' });
+    onProgress({ type: 'token', text: 'Failed to generate the React app. Please try again.' });
+    return;
+  }
+
+  onProgress({ type: 'step', label: 'App generated ✓', status: 'done' });
+  onProgress({ type: 'step', label: 'Deploying to cloud…', status: 'running' });
+
   const url = await deployToGCS(html, appId);
   onProgress({ type: 'step', label: 'Deployed ✓', status: 'done' });
 
