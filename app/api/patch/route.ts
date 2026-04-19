@@ -1,3 +1,5 @@
+export const runtime = 'nodejs';
+
 import Anthropic from '@anthropic-ai/sdk';
 import { validatePatch } from '@/lib/patch-guard';
 
@@ -35,7 +37,7 @@ export async function POST(req: Request) {
     });
 
     const response = await anthropic.messages.create({
-      model: 'claude-sonnet-4-5',
+      model: 'claude-sonnet-4-6',
       max_tokens: 8000,
       system:
         'You are an AI that patches web app files based on visual feedback. You receive a screenshot of the running app and a user request. Output ONLY a JSON array of patches: [{path: string, content: string}]. Output nothing else — just the JSON array.',

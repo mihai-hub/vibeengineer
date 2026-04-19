@@ -1,3 +1,5 @@
+export const runtime = 'nodejs';
+
 /**
  * app/api/vibe/coo/route.ts — Real COO AI endpoint with business data analysis
  *

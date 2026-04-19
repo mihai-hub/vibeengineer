@@ -1,3 +1,5 @@
+export const runtime = 'nodejs';
+
 /**
  * /api/generate — NDJSON streaming code generator
  *
@@ -150,7 +152,7 @@ export async function POST(req: Request) {
         // ── Branch: Anthropic (Claude) ────────────────────────────────────
         } else {
           const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-          const chosenModel = model || 'claude-sonnet-4-5';
+          const chosenModel = model || 'claude-sonnet-4-6';
 
           const anthropicStream = await anthropic.messages.stream({
             model: chosenModel,
@@ -189,7 +191,7 @@ export async function POST(req: Request) {
             type: 'done',
             total_files: totalFiles,
             total_lines: totalLines,
-            model_used: useGemma4 ? 'gemma-4-27b-it' : (model || 'claude-sonnet-4-5'),
+            model_used: useGemma4 ? 'gemma-4-27b-it' : (model || 'claude-sonnet-4-6'),
             safety: { safe: safety.safe, issues: safety.issues },
             preflight: preflight
               ? {

@@ -1,3 +1,5 @@
+export const runtime = 'nodejs';
+
 /**
  * VibeCode Projects API
  * Manages VibeCode projects (CRUD operations)

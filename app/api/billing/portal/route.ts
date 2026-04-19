@@ -1,3 +1,5 @@
+export const runtime = 'nodejs';
+
 /**
  * POST /api/billing/portal
  * Creates a Stripe Customer Portal session.

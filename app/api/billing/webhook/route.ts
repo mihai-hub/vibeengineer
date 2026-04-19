@@ -108,6 +108,10 @@ async function verifyStripeSignature(payload: string, sig: string, secret: strin
     const signature = parts['v1'];
     if (!timestamp || !signature) return false;
 
+    // Reject signatures older than 5 minutes (Stripe spec)
+    const age = Math.floor(Date.now() / 1000) - parseInt(timestamp, 10);
+    if (age > 300) return false;
+
     const signedPayload = `${timestamp}.${payload}`;
     const key = await crypto.subtle.importKey(
       'raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign'],

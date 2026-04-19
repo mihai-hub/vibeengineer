@@ -68,7 +68,7 @@ export async function classifyIntent(message: string): Promise<RouteResult> {
 
   try {
     const response = await anthropic.messages.create({
-      model: 'claude-haiku-4-5',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 50,
       system: `Classify this message into one of two lanes:
 - "build": user wants something CREATED, BUILT, DEPLOYED, WRITTEN, FIXED, or IMPLEMENTED — any action that produces output

@@ -2,8 +2,16 @@
 # GOOGLE CLOUD BUILD — VIBEENGINEER
 # ============================================================================
 # Trigger: push to master branch (Cloud Build trigger in GCP console)
-# Uses Cloud Run source-based deploy (matches existing service config).
-# No Dockerfile needed — Google Buildpacks auto-detects Next.js.
+# Uses Cloud Run source-based deploy — Google Buildpacks auto-detects Next.js.
+#
+# Secrets required in GCP Secret Manager (project: jeff-asi):
+#   ANTHROPIC_API_KEY, VIBE_OWNER_SECRET, JEFF_API_KEY
+#   SUPABASE_URL, SUPABASE_SERVICE_ROLE
+#   NEXT_PUBLIC_SUPABASE_URL, NEXT_PUBLIC_SUPABASE_ANON_KEY
+#   STRIPE_SECRET_KEY, STRIPE_WEBHOOK_SECRET
+#   STRIPE_PRICE_PRO, STRIPE_PRICE_POWER, STRIPE_PRICE_PAYG
+#
+# Non-secret env vars are inlined below (safe to commit).
 
 options:
   logging: CLOUD_LOGGING_ONLY
@@ -14,22 +22,68 @@ substitutions:
   _SERVICE: vibeengineer
 
 steps:
-  # ── Deploy from source (matches existing Cloud Run service config) ─────────
+  # ── Step 1: resolve all secrets from Secret Manager ───────────────────────
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    id: resolve-secrets
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        project="$_PROJECT"
+
+        fetch() {
+          gcloud secrets versions access latest \
+            --secret="$1" --project="$project" 2>/dev/null || echo ""
+        }
+
+        echo "ANTHROPIC_API_KEY=$(fetch ANTHROPIC_API_KEY)" >> /workspace/.env.secrets
+        echo "VIBE_OWNER_SECRET=$(fetch VIBE_OWNER_SECRET)" >> /workspace/.env.secrets
+        echo "JEFF_API_KEY=$(fetch JEFF_API_KEY)" >> /workspace/.env.secrets
+        echo "SUPABASE_URL=$(fetch SUPABASE_URL)" >> /workspace/.env.secrets
+        echo "SUPABASE_SERVICE_ROLE=$(fetch SUPABASE_SERVICE_ROLE)" >> /workspace/.env.secrets
+        echo "NEXT_PUBLIC_SUPABASE_URL=$(fetch NEXT_PUBLIC_SUPABASE_URL)" >> /workspace/.env.secrets
+        echo "NEXT_PUBLIC_SUPABASE_ANON_KEY=$(fetch NEXT_PUBLIC_SUPABASE_ANON_KEY)" >> /workspace/.env.secrets
+        echo "STRIPE_SECRET_KEY=$(fetch STRIPE_SECRET_KEY)" >> /workspace/.env.secrets
+        echo "STRIPE_WEBHOOK_SECRET=$(fetch STRIPE_WEBHOOK_SECRET)" >> /workspace/.env.secrets
+        echo "STRIPE_PRICE_PRO=$(fetch STRIPE_PRICE_PRO)" >> /workspace/.env.secrets
+        echo "STRIPE_PRICE_POWER=$(fetch STRIPE_PRICE_POWER)" >> /workspace/.env.secrets
+        echo "STRIPE_PRICE_PAYG=$(fetch STRIPE_PRICE_PAYG)" >> /workspace/.env.secrets
+        echo "✅ Secrets resolved"
+
+  # ── Step 2: deploy from source ────────────────────────────────────────────
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk
     id: deploy
-    entrypoint: gcloud
+    entrypoint: bash
     args:
-      - run
-      - deploy
-      - $_SERVICE
-      - --source=.
-      - --region=$_REGION
-      - --project=$_PROJECT
-      - --platform=managed
-      - --allow-unauthenticated
-      - --port=3000
-      - --min-instances=0
-      - --max-instances=3
-      - --memory=512Mi
-      - --cpu=1
-      - --set-env-vars=NODE_ENV=production,JEFF_BACKEND_URL=https://api.jeff-asi.com,JEFF_API_KEY=47012794e687f62c3f36458391a22207,VIBE_GCS_BUCKET=vibeengineer-apps,E2B_API_KEY=e2b_cef01a80c2e3eba211dd72c0b8fc3bfc106bf444
+      - -c
+      - |
+        set -euo pipefail
+        source /workspace/.env.secrets
+
+        gcloud run deploy $_SERVICE \
+          --source=. \
+          --region=$_REGION \
+          --project=$_PROJECT \
+          --platform=managed \
+          --allow-unauthenticated \
+          --port=3000 \
+          --min-instances=0 \
+          --max-instances=3 \
+          --memory=1Gi \
+          --cpu=2 \
+          --set-env-vars="NODE_ENV=production,\
+        JEFF_BACKEND_URL=https://api.jeff-asi.com,\
+        VIBE_GCS_BUCKET=vibeengineer-apps,\
+        JEFF_API_KEY=${JEFF_API_KEY},\
+        ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY},\
+        VIBE_OWNER_SECRET=${VIBE_OWNER_SECRET},\
+        SUPABASE_URL=${SUPABASE_URL},\
+        SUPABASE_SERVICE_ROLE=${SUPABASE_SERVICE_ROLE},\
+        NEXT_PUBLIC_SUPABASE_URL=${NEXT_PUBLIC_SUPABASE_URL},\
+        NEXT_PUBLIC_SUPABASE_ANON_KEY=${NEXT_PUBLIC_SUPABASE_ANON_KEY},\
+        STRIPE_SECRET_KEY=${STRIPE_SECRET_KEY},\
+        STRIPE_WEBHOOK_SECRET=${STRIPE_WEBHOOK_SECRET},\
+        STRIPE_PRICE_PRO=${STRIPE_PRICE_PRO},\
+        STRIPE_PRICE_POWER=${STRIPE_PRICE_POWER},\
+        STRIPE_PRICE_PAYG=${STRIPE_PRICE_PAYG}"

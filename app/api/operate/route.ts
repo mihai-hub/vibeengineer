@@ -1,3 +1,5 @@
+export const runtime = 'nodejs';
+
 /**
  * /api/operate — Computer-Use Browser Operator
  *
@@ -100,7 +102,7 @@ export async function POST(req: Request) {
     });
 
     const response = await anthropic.messages.create({
-      model: 'claude-opus-4-5',
+      model: 'claude-opus-4-6',
       max_tokens: 1024,
       system:
         'You are a browser operator. Given HTML content and an action description, output ONLY JSON: {"action": string, "selector": string, "coordinates": {"x": number, "y": number}, "value": string, "found": boolean}. The "coordinates" and "value" fields are optional. No other text. No markdown. Just the raw JSON object.',

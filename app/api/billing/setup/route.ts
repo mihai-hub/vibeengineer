@@ -1,3 +1,5 @@
+export const runtime = 'nodejs';
+
 /**
  * GET /api/billing/setup
  * Returns the billing SQL to run in Supabase SQL Editor.

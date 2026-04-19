@@ -1,3 +1,5 @@
+export const runtime = 'nodejs';
+
 /**
  * app/api/vibe/connect/route.ts — Business data connector endpoint
  *

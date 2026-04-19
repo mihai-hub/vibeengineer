@@ -1,3 +1,5 @@
+export const runtime = 'nodejs';
+
 /**
  * /api/vibe — VibeEngineer unified pipeline entry point
  *

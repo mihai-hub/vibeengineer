@@ -1,3 +1,5 @@
+export const runtime = 'nodejs';
+
 /**
  * /api/coo — SSE streaming AI advisor (COO + CTO)
  *
@@ -99,7 +101,7 @@ export async function POST(req: Request) {
     async start(controller) {
       try {
         const sdkStream = anthropic.messages.stream({
-          model: 'claude-opus-4-5',
+          model: 'claude-opus-4-6',
           max_tokens: 1024,
           system: systemPrompt,
           messages: messages.map(m => ({

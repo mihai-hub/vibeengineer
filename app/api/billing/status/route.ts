@@ -1,3 +1,5 @@
+export const runtime = 'nodejs';
+
 /**
  * GET /api/billing/status?userId=xxx
  * Returns the user's current tier and usage.
