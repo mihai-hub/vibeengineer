@@ -152,7 +152,7 @@ async function fetchWebSources(query: string, anthropic: Anthropic): Promise<Sou
 
   try {
     const response = await anthropic.messages.create({
-      model: 'claude-haiku-4-5',
+      model: 'claude-haiku-4-5-20251001',
       max_tokens: 512,
       system: `You are a citation generator. Today is ${new Date().getFullYear()}. Given a question, return 2-3 plausible reference sources as a JSON array with shape [{title, url, snippet}]. Use real, well-known websites relevant to the topic. Do NOT include year numbers in titles. Return ONLY a valid JSON array — no markdown, no prose, no code fences.`,
       messages: [{ role: 'user', content: query }],
@@ -243,7 +243,7 @@ export async function POST(req: Request): Promise<Response> {
             ...conversationHistory,
             { role: 'user', content: safeMessage },
           ];
-          const sdkStream = anthropic.messages.stream({ model: 'claude-sonnet-4-5', max_tokens: 1024, system: groundedSystem, messages: chatMessages });
+          const sdkStream = anthropic.messages.stream({ model: 'claude-sonnet-4-6', max_tokens: 1024, system: groundedSystem, messages: chatMessages });
           for await (const event of sdkStream) {
             if (event.type === 'content_block_delta' && event.delta.type === 'text_delta') {
               enqueue({ type: 'token', text: event.delta.text });

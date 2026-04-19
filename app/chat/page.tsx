@@ -8,6 +8,18 @@ import { StepCard, AgentStep } from '../../components/StepCard';
 import Sources, { Source } from '../../components/Sources';
 import { saveSkill } from '../../lib/skills';
 
+/* ─── Helpers ────────────────────────────────────────────────── */
+function isModifyIntent(text: string): boolean {
+  const lower = text.toLowerCase().trim();
+  const modifyPhrases = [
+    'change', 'update', 'fix', 'modify', 'edit', 'adjust', 'improve',
+    'make it', 'make the', 'add a', 'add the', 'remove', 'replace',
+    'rename', 'refactor', 'switch', 'turn it', 'can you add', 'can you change',
+    'now add', 'also add', 'instead of',
+  ];
+  return modifyPhrases.some(p => lower.startsWith(p) || lower.includes(p));
+}
+
 /* ─── Types ──────────────────────────────────────────────────── */
 type Mode = 'cto' | 'coo' | 'operate';
 
@@ -123,6 +135,7 @@ function ChatInner() {
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
   const abortRef = useRef<AbortController | null>(null);
+  const lastAppUrlRef = useRef<string | null>(null);
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -247,7 +260,12 @@ function ChatInner() {
       const res = await fetch('/api/vibe', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text, conversationHistory, existingFiles: currentAppFiles ?? undefined }),
+        body: JSON.stringify({
+          message: text,
+          conversationHistory,
+          // Only send existingFiles if this looks like a modification request
+          existingFiles: currentAppFiles && isModifyIntent(text) ? currentAppFiles : undefined,
+        }),
         signal: abortRef.current.signal,
       });
       if (!res.ok || !res.body) throw new Error(`API error ${res.status}`);
@@ -305,15 +323,18 @@ function ChatInner() {
           } else if (evtType === 'app_url') {
             const appUrl = evt.url as string;
             setCurrentAppUrl(appUrl);
+            lastAppUrlRef.current = appUrl;
+            setMessages(prev => prev.map((m, i) => i === prev.length - 1 ? { ...m, appUrl } : m));
             setPreviewOpen(true);
           } else if (evtType === 'app_code') {
             const files = evt.files as Record<string, string>;
             setCurrentAppFiles(files);
             setMessages(prev => prev.map((m, i) => i === prev.length - 1 ? { ...m, appFiles: files } : m));
-            // Auto-save project — name derived from plan title or message
-            if (currentAppUrl) {
+            // Auto-save using ref (not stale state)
+            const urlForSave = lastAppUrlRef.current;
+            if (urlForSave) {
               const name = text.slice(0, 40) || 'Untitled App';
-              saveProject(name, currentAppUrl, files);
+              saveProject(name, urlForSave, files);
             }
           } else if (evtType === 'plan_review') {
             const plan = evt.plan as { title: string; strategy: string; steps: string[]; originalMessage: string };
