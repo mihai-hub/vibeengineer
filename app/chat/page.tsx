@@ -131,6 +131,8 @@ function ChatInner() {
   const [planReview, setPlanReview] = useState<{ title: string; strategy: string; steps: string[]; originalMessage: string } | null>(null);
   const [projects, setProjects] = useState<{ id: string; name: string; url: string; files: Record<string, string>; createdAt: number }[]>([]);
   const [showProjects, setShowProjects] = useState(false);
+  const [buildTier, setBuildTier] = useState<'pro' | 'power'>('pro');
+  const [designMode, setDesignMode] = useState(false);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -263,8 +265,9 @@ function ChatInner() {
         body: JSON.stringify({
           message: text,
           conversationHistory,
-          // Only send existingFiles if this looks like a modification request
           existingFiles: currentAppFiles && isModifyIntent(text) ? currentAppFiles : undefined,
+          buildTier,
+          designMode,
         }),
         signal: abortRef.current.signal,
       });
@@ -633,6 +636,33 @@ function ChatInner() {
                   {s}
                 </button>
               ))}
+            </div>
+          )}
+          {/* Build tier + Design mode toggles */}
+          {mode !== 'operate' && (
+            <div className="flex items-center gap-2 flex-wrap">
+              <div className="flex items-center rounded-lg overflow-hidden border border-zinc-700 text-[11px]">
+                <button
+                  onClick={() => setBuildTier('pro')}
+                  className={`px-3 py-1.5 transition font-medium ${buildTier === 'pro' ? 'bg-violet-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}`}
+                >
+                  ⚡ Sonnet
+                </button>
+                <button
+                  onClick={() => setBuildTier('power')}
+                  className={`px-3 py-1.5 transition font-medium ${buildTier === 'power' ? 'bg-gradient-to-r from-cyan-600 to-violet-600 text-white' : 'bg-zinc-800 text-zinc-400 hover:text-zinc-200'}`}
+                >
+                  🔥 Opus Power
+                </button>
+              </div>
+              <button
+                onClick={() => setDesignMode(d => !d)}
+                className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg border text-[11px] font-medium transition ${designMode ? 'bg-emerald-500/15 border-emerald-500/40 text-emerald-400' : 'bg-zinc-800 border-zinc-700 text-zinc-400 hover:text-zinc-200'}`}
+              >
+                🎨 Design Mode{designMode ? ' ✓' : ''}
+              </button>
+              {buildTier === 'power' && <span className="text-[10px] text-cyan-500/70">Claude Opus 4.6 — best code quality</span>}
+              {designMode && <span className="text-[10px] text-emerald-500/70">Luxury UI generation</span>}
             </div>
           )}
           {mode === 'operate' && <div className="flex items-center gap-2"><Globe className="w-4 h-4 text-cyan-400 shrink-0" /><input type="url" value={urlInput} onChange={e => setUrlInput(e.target.value)} placeholder="https://example.com — URL to operate (optional)" className="flex-1 rounded-lg bg-zinc-800 border border-cyan-500/30 px-3 py-2 text-xs text-white placeholder-zinc-500 focus:outline-none focus:border-cyan-500/50" /></div>}

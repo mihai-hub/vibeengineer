@@ -129,6 +129,76 @@ const MODIFY_SYSTEM = `You are VibeEngineer's build engine. Modify the existing 
 Apply ONLY the requested changes. Keep everything else identical.
 Return ONLY the raw HTML starting with <!DOCTYPE html>. No markdown, no code fences.`;
 
+const DESIGN_SYSTEM = `You are VibeEngineer's Design Engine — powered by Claude Opus. Generate STUNNING, production-quality apps.
+
+Design philosophy: Every pixel matters. Dark luxury aesthetic. Glassmorphism. Micro-animations with CSS transitions. Professional typography (system-ui + monospace for code). Feels like a $10k Figma design system, live and deployed in 10 seconds.
+
+EXACT STRUCTURE TO FOLLOW:
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>App Name</title>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: system-ui, sans-serif; background: #080810; color: #e4e4e7; min-height: 100vh; }
+    /* Glassmorphism base */
+    .glass { background: rgba(255,255,255,0.04); backdrop-filter: blur(12px); border: 1px solid rgba(255,255,255,0.08); }
+    /* Animations */
+    @keyframes fadeUp { from { opacity:0; transform:translateY(12px); } to { opacity:1; transform:translateY(0); } }
+    @keyframes glow { 0%,100% { box-shadow: 0 0 20px rgba(6,182,212,0.3); } 50% { box-shadow: 0 0 40px rgba(6,182,212,0.6); } }
+    .fade-up { animation: fadeUp 0.4s ease forwards; }
+    /* more CSS */
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script>
+    window.onerror = function(msg, src, line) {
+      document.getElementById('root').innerHTML = '<div style="padding:2rem;color:#f87171;font-family:monospace">Error: ' + msg + ' (line ' + line + ')</div>';
+    };
+  </script>
+  <script type="text/babel" data-presets="react">
+    const { useState, useEffect, useRef, useCallback, useMemo } = React;
+
+    function App() {
+      /* full implementation here — LUXURY UI */
+      return (
+        <div className="fade-up">
+          {/* stunning UI here */}
+        </div>
+      );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+  </script>
+</body>
+</html>
+
+DESIGN RULES (non-negotiable):
+1. NEVER use: import, export, require
+2. NEVER use: React.useState — destructure FIRST: const { useState } = React;
+3. ALWAYS add data-presets="react" to the script tag
+4. ALWAYS include window.onerror
+5. localStorage for ALL data persistence
+6. Color palette: bg #080810, surface rgba(255,255,255,0.04), accent #06b6d4 (cyan) + #8b5cf6 (violet) + #10b981 (emerald for success)
+7. Every interactive element: hover transitions (0.2s ease), active states, focus rings
+8. Typography: headings in font-weight 700, body 400, captions 300. Use letter-spacing on headings.
+9. For icons: inline SVG with currentColor. For charts: inline SVG paths.
+10. Cards: rounded-2xl (border-radius: 16px) + glassmorphism + subtle shadow
+11. Buttons: gradient backgrounds, hover glow effect, smooth transitions
+12. Empty states: centered illustration (SVG) + descriptive text + CTA button
+13. Mobile-first: flexbox/grid layouts that work on 320px screens
+
+MAKE IT LOOK LIKE A REAL PRODUCT PEOPLE WOULD PAY FOR.
+Return ONLY the raw HTML. No markdown, no code fences, no explanation.`;
+
 // ── Plan generation ───────────────────────────────────────────────────────────
 
 interface BuildPlan {
@@ -158,6 +228,11 @@ async function generatePlan(message: string, anthropic: Anthropic): Promise<Buil
   }
 }
 
+export interface BuildOptions {
+  buildTier?: 'pro' | 'power';   // power = Claude Opus 4.6
+  designMode?: boolean;           // Design Engine — luxury UI generation
+}
+
 // ── Main build function ───────────────────────────────────────────────────────
 
 export async function build(
@@ -165,9 +240,12 @@ export async function build(
   conversationHistory: { role: 'user' | 'assistant'; content: string }[],
   onProgress: ProgressFn,
   existingFiles?: Record<string, string>,
+  options?: BuildOptions,
 ): Promise<void> {
   const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
   const appId = `app-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const model = options?.buildTier === 'power' ? 'claude-opus-4-6' : 'claude-sonnet-4-6';
+  const systemPrompt = options?.designMode ? DESIGN_SYSTEM : CDN_SYSTEM;
 
   // ── Backend-only requests (auth, payments, multi-user) ────────────────────
   if (needsBackend(message) && !existingFiles) {
@@ -180,12 +258,12 @@ export async function build(
 
   // ── Modification of existing app ──────────────────────────────────────────
   if (existingFiles && Object.keys(existingFiles).length > 0 && isModifyRequest(message)) {
-    await modifyApp(message, appId, anthropic, onProgress, existingFiles);
+    await modifyApp(message, appId, anthropic, onProgress, existingFiles, model);
     return;
   }
 
   // ── Everything else → CDN path ────────────────────────────────────────────
-  await buildCdnApp(message, appId, anthropic, onProgress);
+  await buildCdnApp(message, appId, anthropic, onProgress, model, systemPrompt);
 }
 
 // ── CDN build (all requests) ──────────────────────────────────────────────────
@@ -195,6 +273,8 @@ async function buildCdnApp(
   appId: string,
   anthropic: Anthropic,
   onProgress: ProgressFn,
+  model = 'claude-sonnet-4-6',
+  systemPrompt = CDN_SYSTEM,
 ): Promise<void> {
   const plan = await generatePlan(message, anthropic);
   onProgress({
@@ -205,12 +285,13 @@ async function buildCdnApp(
     status: 'running',
   });
 
-  onProgress({ type: 'step', label: 'Generating app…', status: 'running' });
+  const tierLabel = model.includes('opus') ? 'Generating app (Opus Power)…' : 'Generating app…';
+  onProgress({ type: 'step', label: tierLabel, status: 'running' });
 
   const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 6000,
-    system: CDN_SYSTEM,
+    model,
+    max_tokens: 8000,
+    system: systemPrompt,
     messages: [{ role: 'user', content: message }],
   });
 
@@ -246,14 +327,15 @@ async function modifyApp(
   anthropic: Anthropic,
   onProgress: ProgressFn,
   existingFiles: Record<string, string>,
+  model = 'claude-sonnet-4-6',
 ): Promise<void> {
   onProgress({ type: 'step', label: 'Modifying app…', status: 'running' });
 
   const existingHtml = existingFiles['index.html'] ?? Object.values(existingFiles)[0] ?? '';
 
   const response = await anthropic.messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 6000,
+    model,
+    max_tokens: 8000,
     system: MODIFY_SYSTEM,
     messages: [
       { role: 'user', content: `Existing code:\n${existingHtml}\n\nUser request: ${message}` },

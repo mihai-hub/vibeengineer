@@ -20,7 +20,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import { classifyIntent } from '@/lib/vibe-router';
 import { guardInput, GuardianBlock } from '@/lib/prompt-guardian';
 import type { AgentStep } from '@/components/StepCard';
-import { build as vibeBuild } from '@/lib/vibe-builder';
+import { build as vibeBuild, type BuildOptions } from '@/lib/vibe-builder';
 
 // ── Source type ────────────────────────────────────────────────────────────────
 export interface Source {
@@ -184,6 +184,8 @@ export async function POST(req: Request): Promise<Response> {
     conversationHistory?: { role: 'user' | 'assistant'; content: string }[];
     existingFiles?: Record<string, string>;
     skipPlanGate?: boolean;
+    buildTier?: 'pro' | 'power';
+    designMode?: boolean;
   };
 
   try {
@@ -192,7 +194,8 @@ export async function POST(req: Request): Promise<Response> {
     return new Response('Invalid JSON body', { status: 400 });
   }
 
-  const { message: rawMessage, conversationHistory = [], existingFiles, skipPlanGate } = body;
+  const { message: rawMessage, conversationHistory = [], existingFiles, skipPlanGate, buildTier, designMode } = body;
+  const buildOptions: BuildOptions = { buildTier, designMode };
 
   // Strip approval prefix if present
   const isPreApproved = rawMessage?.startsWith(APPROVED_PREFIX) || skipPlanGate;
@@ -328,7 +331,7 @@ export async function POST(req: Request): Promise<Response> {
           } else if (progress.type === 'token') {
             enqueue({ type: 'token', text: progress.text ?? '' });
           }
-        }, existingFiles);
+        }, existingFiles, buildOptions);
 
         enqueue({
           type: 'step',
