@@ -87,10 +87,12 @@ function detectMode(text: string): Mode {
   const lower = text.toLowerCase();
   const hasUrl = /https?:\/\/[^\s]+/.test(text);
   const operatorKw = ['click', 'navigate to', 'go to', 'open site', 'visit ', 'operate', 'find on', 'scroll down', 'type into', 'fill in', 'check the site', 'look at the page'];
-  const ctoKw = ['build', 'architecture', 'stack', 'tech', 'code', 'api', 'database', 'deploy', 'infrastructure', 'framework', 'backend', 'frontend', 'server', 'microservice'];
+  const ctoKw = ['build', 'architecture', 'stack', 'tech', 'code', 'api', 'database', 'deploy', 'infrastructure', 'framework', 'backend', 'frontend', 'server', 'microservice', 'create', 'generate', 'make me'];
   const cooKw = ['grow', 'users', 'revenue', 'marketing', 'pricing', 'strategy', 'customers', 'operations', 'hire', 'launch', 'monetize', 'acquisition', 'retention', 'churn', 'gtm'];
 
   if (hasUrl || operatorKw.some(k => lower.includes(k))) return 'operate';
+  // "build me" at start always → CTO regardless of other keywords (e.g. business data pasted in message)
+  if (/^build\b/.test(lower) || lower.includes('build me') || lower.includes('build a') || lower.includes('build an')) return 'cto';
   const ctoScore = ctoKw.filter(k => lower.includes(k)).length;
   const cooScore = cooKw.filter(k => lower.includes(k)).length;
   if (cooScore > ctoScore) return 'coo';
@@ -268,6 +270,8 @@ function ChatInner() {
     setCurrentLane(null);
     setCurrentSources([]);
     setCurrentAppUrl(null);
+    setCurrentAppFiles(null);
+    lastAppUrlRef.current = null;   // clear ref so old URL never bleeds into new build
     setPreviewOpen(false);
     setSuggestions([]);
     setClarifyQuestion(null);
@@ -651,8 +655,8 @@ function ChatInner() {
                     </div>
                   )}
 
-                  {/* Inline app preview */}
-                  {msg.role === 'assistant' && msg.appUrl && (
+                  {/* Inline app preview — CDN builds only (single HTML, iframeable) */}
+                  {msg.role === 'assistant' && msg.appUrl && msg.appUrl.includes('storage.googleapis.com') && (
                     <div className="mt-2 rounded-xl overflow-hidden border border-zinc-700/60 bg-zinc-900">
                       <div className="flex items-center justify-between px-3 py-1.5 bg-zinc-800/80 border-b border-zinc-700/60">
                         <div className="flex items-center gap-1.5">
@@ -675,7 +679,7 @@ function ChatInner() {
                           </a>
                         </div>
                       </div>
-                      {i === messages.length - 1 && previewOpen || (i < messages.length - 1 && msg.appUrl) ? (
+                      {(i === messages.length - 1 && previewOpen) || (i < messages.length - 1) ? (
                         <iframe
                           src={msg.appUrl}
                           className="w-full"

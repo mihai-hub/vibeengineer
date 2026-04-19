@@ -51,10 +51,19 @@ export async function deployToGCS(
     const storage = new Storage();
     const bucket = storage.bucket(GCS_BUCKET);
     const file = bucket.file(`${appId}/index.html`);
-    await file.save(html, {
+    // resumable: false required in Cloud Run — resumable uploads can silently fail
+    await file.save(Buffer.from(html, 'utf-8'), {
       contentType: 'text/html; charset=utf-8',
+      resumable: false,
       metadata: { cacheControl: 'public, max-age=3600' },
+      validation: false,
     });
+    // Verify the file actually exists before returning URL
+    const [exists] = await file.exists();
+    if (!exists) {
+      console.error('[GCS] file.save() completed but file not found after upload');
+      return null;
+    }
     return `https://storage.googleapis.com/${GCS_BUCKET}/${appId}/index.html`;
   } catch (e) {
     console.error('[GCS] upload failed:', e instanceof Error ? e.message : e);
