@@ -7,6 +7,7 @@ import MarkdownRenderer from '../../components/MarkdownRenderer';
 import { StepCard, AgentStep } from '../../components/StepCard';
 import Sources, { Source } from '../../components/Sources';
 import { saveSkill } from '../../lib/skills';
+import UsageMeter from '../../components/UsageMeter';
 
 /* ─── Helpers ────────────────────────────────────────────────── */
 function isModifyIntent(text: string): boolean {
@@ -142,6 +143,7 @@ function ChatInner() {
   const [showDeployToken, setShowDeployToken] = useState<string | null>(null); // 'vercel' | 'github' | null
   const [businessContext, setBusinessContext] = useState<string | null>(null);
   const [showConnector, setShowConnector] = useState(false);
+  const [usageData, setUsageData] = useState<{ used: number; limit: number | null; tier: string }>({ used: 0, limit: 3, tier: 'free' });
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -157,6 +159,14 @@ function ChatInner() {
     try {
       const saved = localStorage.getItem('vibe_projects');
       if (saved) setProjects(JSON.parse(saved) as typeof projects);
+    } catch { /* ignore */ }
+  }, []);
+
+  // Load usage from localStorage
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem('vibe_usage');
+      if (saved) setUsageData(JSON.parse(saved) as typeof usageData);
     } catch { /* ignore */ }
   }, []);
 
@@ -389,6 +399,15 @@ function ChatInner() {
             setMessages(prev => prev.map((m, i) => i === prev.length - 1 ? { ...m, content: `⚠️ ${errMsg}` } : m));
           } else if (evtType === 'done') {
             // pass
+          } else if (evtType === 'usage') {
+            const u = { used: (evt.used as number) ?? 0, limit: (evt.limit as number | null) ?? null, tier: (evt.tier as string) ?? 'free' };
+            setUsageData(u);
+            try { localStorage.setItem('vibe_usage', JSON.stringify(u)); } catch { /* ignore */ }
+          } else if (evtType === 'usage_limit') {
+            const limitAmt = (evt.limit as number) ?? 3;
+            const upgradeMsg = `You've used all ${limitAmt} builds this month. [Upgrade to Pro](/pricing) for 50 builds.`;
+            setMessages(prev => [...prev, { role: 'assistant', content: upgradeMsg }]);
+            setStreaming(false);
           } else if (evtType === 'vibe_task_open_panel') {
             setBuilderBanner(`⚡ Builder activated — ${((evt.goal as string) ?? 'building now').slice(0, 60)}`);
             setTimeout(() => router.push((evt.navigateTo as string) ?? '/builder'), 1500);
@@ -477,6 +496,13 @@ function ChatInner() {
               </div>
             )}
           </div>
+          {/* Usage meter */}
+          <UsageMeter
+            used={usageData.used}
+            limit={usageData.limit}
+            tier={usageData.tier}
+            onUpgrade={() => { window.location.href = '/pricing'; }}
+          />
         </div>
         <div className="flex items-center gap-2">
           {currentLane === 'fast' && <div className="flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium animate-pulse" style={{ background: 'rgba(250,204,21,0.12)', border: '1px solid rgba(250,204,21,0.3)', color: '#fbbf24' }}>⚡ Fast answer</div>}

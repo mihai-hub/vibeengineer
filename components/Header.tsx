@@ -9,8 +9,7 @@ export default function Header() {
         </a>
 
         {/* Centre — AI COO status */}
-        <div className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2">
-          {/* Pulsing green dot */}
+        <div className="absolute left-1/2 -translate-x-1/2 hidden sm:flex items-center gap-2">
           <span className="relative flex h-2.5 w-2.5">
             <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-green-400 opacity-75" />
             <span className="relative inline-flex rounded-full h-2.5 w-2.5 bg-green-500" />
@@ -18,12 +17,19 @@ export default function Header() {
           <span className="text-sm font-medium text-violet-400">Your AI COO is ready</span>
         </div>
 
-        <div className="flex items-center gap-4">
-          <a href="/builder" className="text-sm text-zinc-400 hover:text-zinc-200 transition-colors">Builder</a>
-          <span className="text-xs px-2 py-1 rounded-full border border-violet-500/30 bg-violet-500/10 text-violet-300">
-            Powered by Claude
-          </span>
-        </div>
+        <nav className="flex items-center gap-4">
+          <a href="/" className="text-sm text-zinc-400 hover:text-zinc-200 transition-colors">Home</a>
+          <a href="/chat" className="text-sm text-zinc-400 hover:text-zinc-200 transition-colors">Chat</a>
+          <a href="/pricing" className="text-sm text-zinc-400 hover:text-zinc-200 transition-colors">Pricing</a>
+          <a href="/dashboard" className="text-sm text-zinc-400 hover:text-zinc-200 transition-colors">Dashboard</a>
+          <a
+            href="/auth"
+            className="text-xs px-3 py-1.5 rounded-lg font-semibold transition-all hover:brightness-110"
+            style={{ background: 'rgba(139,92,246,0.15)', border: '1px solid rgba(139,92,246,0.30)', color: '#a78bfa' }}
+          >
+            Sign in
+          </a>
+        </nav>
       </div>
     </header>
   );
