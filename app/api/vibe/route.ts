@@ -24,6 +24,7 @@ import { build as vibeBuild, type BuildOptions } from '@/lib/vibe-builder';
 import { buildReal } from '@/lib/real-builder';
 import { deployToVercel } from '@/lib/vercel-deploy';
 import { pushToGitHub } from '@/lib/github-deploy';
+import { isOwnerRequest, getUserTier, checkUsageLimit, recordUsage, TIER_CONFIG } from '@/lib/billing';
 
 // ── Source type ────────────────────────────────────────────────────────────────
 export interface Source {
@@ -190,6 +191,9 @@ export async function POST(req: Request): Promise<Response> {
     buildTier?: 'pro' | 'power';
     designMode?: boolean;
     buildMode?: 'cdn' | 'real';
+    businessContext?: string;
+    userId?: string;
+    ownerSecret?: string;  // owner bypass — Mihai's own secret
   };
 
   try {
@@ -198,8 +202,17 @@ export async function POST(req: Request): Promise<Response> {
     return new Response('Invalid JSON body', { status: 400 });
   }
 
-  const { message: rawMessage, conversationHistory = [], existingFiles, skipPlanGate, buildTier, designMode, buildMode } = body;
-  const buildOptions: BuildOptions = { buildTier, designMode };
+  const { message: rawMessage, conversationHistory = [], existingFiles, skipPlanGate, buildTier, designMode, buildMode, businessContext, userId = 'anonymous', ownerSecret } = body;
+
+  // ── Owner bypass ─────────────────────────────────────────────────────────
+  const isOwner = isOwnerRequest(ownerSecret);
+  const tier = isOwner ? 'owner' : (userId !== 'anonymous' ? await getUserTier(userId) : 'free');
+  const tierConfig = TIER_CONFIG[tier];
+
+  const buildOptions: BuildOptions = {
+    buildTier: isOwner ? 'power' : (tierConfig.canUseOpus ? buildTier : 'pro'),
+    designMode: tierConfig.canUseDesign ? designMode : false,
+  };
 
   // Strip approval prefix if present
   const isPreApproved = rawMessage?.startsWith(APPROVED_PREFIX) || skipPlanGate;
@@ -249,6 +262,12 @@ export async function POST(req: Request): Promise<Response> {
             const webContext = sources.map((s, i) => `[${i + 1}] ${s.title}\nURL: ${s.url}\n${s.snippet}`).join('\n\n');
             groundedSystem += `\n\n## Live Web Sources (today: ${new Date().toISOString().slice(0, 10)})\n\n${webContext}\n\nIMPORTANT: Base your answer on these sources. Cite them inline using [1], [2], [3] notation where relevant.`;
           }
+
+          let groundedSystemFast = groundedSystem;
+          if (businessContext) {
+            groundedSystemFast += `\n\n## User's Business Data\n${businessContext}\n\nUse this data when giving advice.`;
+          }
+          groundedSystem = groundedSystemFast;
 
           const chatMessages: { role: 'user' | 'assistant'; content: string }[] = [
             ...conversationHistory,
@@ -303,6 +322,17 @@ export async function POST(req: Request): Promise<Response> {
             controller.close();
             return;
           } catch { /* plan parse failed — skip gate, build directly */ }
+        }
+
+        // ── Usage limit check ───────────────────────────────────────────────
+        const currentBuildType = buildMode === 'real' ? 'real' : 'cdn';
+        const usageCheck = await checkUsageLimit(userId, tier, currentBuildType);
+        if (!usageCheck.allowed) {
+          enqueue({ type: 'error', message: usageCheck.reason ?? 'Usage limit reached.' });
+          enqueue({ type: 'usage_limit', used: usageCheck.used, limit: usageCheck.limit, tier });
+          enqueue({ type: 'done' });
+          controller.close();
+          return;
         }
 
         // Build
@@ -418,6 +448,11 @@ export async function POST(req: Request): Promise<Response> {
           type: 'step',
           step: { id: 'build-done', type: 'agent_done', label: 'Build complete', status: 'done' } satisfies AgentStep,
         });
+
+        // Record usage (non-blocking)
+        recordUsage(userId, currentBuildType, tier).catch(() => {});
+        // Emit usage info so frontend can show remaining builds
+        enqueue({ type: 'usage', used: (usageCheck.used ?? 0) + 1, limit: usageCheck.limit, tier });
 
         // Generate follow-up suggestions (non-blocking — fire and forget into SSE)
         try {
