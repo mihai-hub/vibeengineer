@@ -226,7 +226,11 @@ export async function POST(req: Request): Promise<Response> {
 
       try {
         // ── Step 1: Classify intent ───────────────────────────────────────────
-        const decision = await classifyIntent(safeMessage);
+        // If existingFiles present → user is modifying an app → always build lane
+        const hasExistingFiles = existingFiles && Object.keys(existingFiles).length > 0;
+        const decision = hasExistingFiles
+          ? { lane: 'build' as const, intent: 'modify existing app' }
+          : await classifyIntent(safeMessage);
         enqueue({ type: 'lane', lane: decision.lane, intent: decision.intent });
 
         if (decision.lane === 'fast') {
@@ -273,8 +277,7 @@ export async function POST(req: Request): Promise<Response> {
 
         // Gate 2: Plan approval — generate plan, show it, wait for user to approve
         // Skip if: user pre-approved, this is a modify request, or existingFiles present
-        const hasExisting = existingFiles && Object.keys(existingFiles).length > 0;
-        if (!isPreApproved && !hasExisting) {
+        if (!isPreApproved && !hasExistingFiles) {
           const planResp = await haikuClient.messages.create({
             model: 'claude-haiku-4-5-20251001', max_tokens: 400, system: PLAN_SYSTEM_ROUTE,
             messages: [{ role: 'user', content: safeMessage }],

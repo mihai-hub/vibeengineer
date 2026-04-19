@@ -196,9 +196,14 @@ function ChatInner() {
   }, []);
 
   /* ─── Send ──────────────────────────────────────────────────── */
+  const APPROVED_PREFIX = '__APPROVED__:';
   const sendMessage = useCallback(async (overrideText?: string) => {
-    const text = (overrideText ?? input).trim();
-    if (!text || streaming || operating) return;
+    const rawText = (overrideText ?? input).trim();
+    if (!rawText || streaming || operating) return;
+
+    // Strip internal prefix — never show it in the UI
+    const isApproved = rawText.startsWith(APPROVED_PREFIX);
+    const text = isApproved ? rawText.slice(APPROVED_PREFIX.length).trim() : rawText;
 
     const activeMode = lockedMode ?? detectMode(text);
     setMode(activeMode);
@@ -206,9 +211,11 @@ function ChatInner() {
     setInput('');
     if (textareaRef.current) textareaRef.current.style.height = 'auto';
 
-    const userMsg: Message = { role: 'user', content: text, mode: activeMode };
-    const newMessages = [...messages, userMsg];
-    setMessages(newMessages);
+    // Don't add a duplicate user message when re-sending an approved plan
+    const lastMsg = messages[messages.length - 1];
+    const isDuplicate = isApproved && lastMsg?.role === 'assistant';
+    const newMessages = isDuplicate ? messages : [...messages, { role: 'user', content: text, mode: activeMode } as Message];
+    if (!isDuplicate) setMessages(newMessages);
 
     /* ── Operator mode ─────────────────────────────────────── */
     if (activeMode === 'operate') {
@@ -263,7 +270,7 @@ function ChatInner() {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          message: text,
+          message: isApproved ? rawText : text,  // send prefix to backend for gate bypass
           conversationHistory,
           existingFiles: currentAppFiles && isModifyIntent(text) ? currentAppFiles : undefined,
           buildTier,
