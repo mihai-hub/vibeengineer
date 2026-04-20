@@ -135,6 +135,11 @@ CRITICAL RULES — breaking any of these = black page:
 6. For charts: inline SVG only. For icons: Unicode chars or inline SVG only.
 7. Dark theme: background #0f0f13, accent colors neon cyan #06b6d4 or violet #8b5cf6
 8. Every button must do something — no mockups
+9. NEVER embed long string literals (>200 chars) inside JSX — extract to const OUTSIDE the component
+10. NEVER embed SVG path data (d="M...") directly in JSX — always: const PATH = "M..."; then use d={PATH}
+11. NEVER use tagged template literals or complex regex inside JSX expressions
+12. Keep total <script type="text/babel"> block under 600 lines — Babel standalone has parse limits
+13. For world maps or complex SVGs: use simple shapes (circles, rect, path with short d values) NOT geodata
 
 Return ONLY the raw HTML. No markdown, no code fences, no explanation.`;
 
@@ -212,6 +217,10 @@ DESIGN RULES (non-negotiable):
 11. Buttons: gradient backgrounds, hover glow effect, smooth transitions
 12. Empty states: centered illustration (SVG) + descriptive text + CTA button
 13. Mobile-first: flexbox/grid layouts that work on 320px screens
+14. NEVER embed long string literals (>200 chars) inside JSX — extract to const OUTSIDE the component
+15. NEVER embed SVG path data (d="M...") directly in JSX — always: const PATH = "M..."; then use d={PATH}
+16. Keep total <script type="text/babel"> block under 600 lines — Babel standalone crashes on complex files
+17. For world maps or complex SVGs: use simple shapes (circles/rect) NOT real geodata paths
 
 MAKE IT LOOK LIKE A REAL PRODUCT PEOPLE WOULD PAY FOR.
 Return ONLY the raw HTML. No markdown, no code fences, no explanation.`;
@@ -331,18 +340,24 @@ async function buildCdnApp(
     const reviewResp = await anthropic.messages.create({
       model,
       max_tokens: 8000,
-      system: `You are a React/HTML code reviewer. Check this single-file CDN React app for bugs.
+      system: `You are a React/HTML code reviewer for Babel-standalone CDN apps. These apps run in a browser with @babel/standalone — NOT Node.js. Babel standalone WILL CRASH SILENTLY (JS Error: Script error. Line: 0) on certain patterns.
 
-Look for:
-1. Variables used before declaration (const { useState } = React; must come BEFORE any hook calls)
-2. import / export / require statements (banned in CDN mode — use globals)
+Check for ALL of the following:
+1. Variables used before declaration (const { useState } = React; MUST come before any hook calls)
+2. import / export / require statements (BANNED — crash immediately)
 3. Missing data-presets="react" on <script type="text/babel">
-4. Unclosed JSX tags or mismatched braces
-5. React.useState called directly instead of destructured useState
-6. Any obvious runtime error that would cause a blank page
+4. Unclosed JSX tags, mismatched braces, or unbalanced parentheses
+5. React.useState / React.useEffect called directly instead of destructured
+6. String literals longer than 200 characters embedded INSIDE JSX expressions — these CRASH Babel. Fix: extract to const outside the component.
+7. SVG d="..." path data longer than 100 chars inline in JSX — CRASH. Fix: const PATH_DATA = "M..."; outside component, then d={PATH_DATA}
+8. Any string with complex characters (Unicode, escaped sequences) inside JSX template expressions
+9. <script type="text/babel"> block longer than 600 lines total — simplify or split data out
+10. Deeply nested ternary expressions (more than 3 levels) inside JSX — refactor to variables
+11. Array.map() calls with complex multi-line JSX inside — verify closing parentheses match
+12. Any world map, geographical SVG, or long path data — replace with simple colored shapes (circles/rectangles)
 
-If bugs found: return the COMPLETE corrected HTML starting with <!DOCTYPE html>.
-If no bugs: return exactly the string "OK".`,
+If ANY of these issues are found: return the COMPLETE corrected HTML starting with <!DOCTYPE html>. For issues 6-12 specifically, extract the offending strings to const variables OUTSIDE the App function.
+If no issues: return exactly the string "OK".`,
       messages: [{ role: 'user', content: html }],
     });
     const reviewText = reviewResp.content[0]?.type === 'text' ? reviewResp.content[0].text.trim() : 'OK';
