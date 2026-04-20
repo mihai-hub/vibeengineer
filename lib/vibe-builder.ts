@@ -322,14 +322,50 @@ async function buildCdnApp(
   }
 
   onProgress({ type: 'step', label: 'App generated ✓', status: 'done' });
+
+  // ── Self-review pass (agentic loop iteration 1) ───────────────────────────
+  onProgress({ type: 'step', label: 'Self-reviewing for bugs…', status: 'running', stepType: 'thinking' });
+
+  let finalHtml = html;
+  try {
+    const reviewResp = await anthropic.messages.create({
+      model,
+      max_tokens: 8000,
+      system: `You are a React/HTML code reviewer. Check this single-file CDN React app for bugs.
+
+Look for:
+1. Variables used before declaration (const { useState } = React; must come BEFORE any hook calls)
+2. import / export / require statements (banned in CDN mode — use globals)
+3. Missing data-presets="react" on <script type="text/babel">
+4. Unclosed JSX tags or mismatched braces
+5. React.useState called directly instead of destructured useState
+6. Any obvious runtime error that would cause a blank page
+
+If bugs found: return the COMPLETE corrected HTML starting with <!DOCTYPE html>.
+If no bugs: return exactly the string "OK".`,
+      messages: [{ role: 'user', content: html }],
+    });
+    const reviewText = reviewResp.content[0]?.type === 'text' ? reviewResp.content[0].text.trim() : 'OK';
+    const cleaned = reviewText.replace(/^```(?:html)?\s*/i, '').replace(/\s*```\s*$/, '').trim();
+    if (cleaned !== 'OK' && (cleaned.startsWith('<!DOCTYPE') || cleaned.startsWith('<html'))) {
+      finalHtml = cleaned;
+      onProgress({ type: 'step', label: 'Bugs auto-fixed ✓', status: 'done', stepType: 'tool_result' });
+    } else {
+      onProgress({ type: 'step', label: 'No bugs found ✓', status: 'done', stepType: 'tool_result' });
+    }
+  } catch {
+    // Self-review optional — if it fails, continue with original
+    onProgress({ type: 'step', label: 'Review skipped', status: 'done' });
+  }
+
   onProgress({ type: 'step', label: 'Deploying to cloud…', status: 'running' });
 
-  const url = await deployToGCS(html, appId);
+  const url = await deployToGCS(finalHtml, appId);
   onProgress({ type: 'step', label: 'Deployed ✓', status: 'done' });
 
   if (url) {
     onProgress({ type: 'app_url', url });
-    onProgress({ type: 'app_code', files: { 'index.html': html } });
+    onProgress({ type: 'app_code', files: { 'index.html': finalHtml } });
     onProgress({ type: 'token', text: `✅ **Live at:** [Open app](${url})` });
   } else {
     onProgress({ type: 'token', text: '✅ App generated. GCS deploy failed — check VIBE_GCS_BUCKET env var.' });
