@@ -88,9 +88,9 @@ EXACT STRUCTURE TO FOLLOW — do not deviate:
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>App Name</title>
-  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin="anonymous"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: system-ui, sans-serif; background: #0f0f13; color: #e4e4e7; min-height: 100vh; }
@@ -100,9 +100,13 @@ EXACT STRUCTURE TO FOLLOW — do not deviate:
 <body>
   <div id="root"></div>
   <script>
-    window.onerror = function(msg, src, line) {
-      document.getElementById('root').innerHTML = '<div style="padding:2rem;color:#f87171;font-family:monospace">Error: ' + msg + ' (line ' + line + ')</div>';
+    window.onerror = function(msg, src, line, col, err) {
+      var detail = err ? err.toString() : msg;
+      document.getElementById('root').innerHTML = '<div style="padding:2rem;color:#f87171;font-family:monospace;white-space:pre-wrap">JS Error: ' + detail + '\nLine: ' + line + '</div>';
     };
+    window.addEventListener('unhandledrejection', function(e) {
+      document.getElementById('root').innerHTML = '<div style="padding:2rem;color:#f87171;font-family:monospace;white-space:pre-wrap">Async Error: ' + e.reason + '</div>';
+    });
   </script>
   <script type="text/babel" data-presets="react">
     const { useState, useEffect, useRef, useCallback } = React;
@@ -150,9 +154,9 @@ EXACT STRUCTURE TO FOLLOW:
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>App Name</title>
-  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
-  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
-  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin="anonymous"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js" crossorigin="anonymous"></script>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; }
     body { font-family: system-ui, sans-serif; background: #080810; color: #e4e4e7; min-height: 100vh; }
@@ -168,9 +172,13 @@ EXACT STRUCTURE TO FOLLOW:
 <body>
   <div id="root"></div>
   <script>
-    window.onerror = function(msg, src, line) {
-      document.getElementById('root').innerHTML = '<div style="padding:2rem;color:#f87171;font-family:monospace">Error: ' + msg + ' (line ' + line + ')</div>';
+    window.onerror = function(msg, src, line, col, err) {
+      var detail = err ? err.toString() : msg;
+      document.getElementById('root').innerHTML = '<div style="padding:2rem;color:#f87171;font-family:monospace;white-space:pre-wrap">JS Error: ' + detail + '\nLine: ' + line + '</div>';
     };
+    window.addEventListener('unhandledrejection', function(e) {
+      document.getElementById('root').innerHTML = '<div style="padding:2rem;color:#f87171;font-family:monospace;white-space:pre-wrap">Async Error: ' + e.reason + '</div>';
+    });
   </script>
   <script type="text/babel" data-presets="react">
     const { useState, useEffect, useRef, useCallback, useMemo } = React;
