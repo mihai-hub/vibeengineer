@@ -172,6 +172,26 @@ function ChatInner() {
     } catch { /* ignore */ }
   }, []);
 
+  // Load chat history from localStorage on mount
+  useEffect(() => {
+    try {
+      const saved = localStorage.getItem(`vibe_messages_${initialMode}`);
+      if (saved) {
+        const parsed = JSON.parse(saved) as Message[];
+        if (parsed.length > 1) setMessages(parsed); // only restore if there's real content beyond opening
+      }
+    } catch { /* ignore */ }
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Save chat history to localStorage on every message change
+  useEffect(() => {
+    if (messages.length <= 1) return; // don't save just the opening message
+    try {
+      localStorage.setItem(`vibe_messages_${initialMode}`, JSON.stringify(messages.slice(-50))); // keep last 50
+    } catch { /* ignore */ }
+  }, [messages, initialMode]);
+
   const saveProject = (name: string, url: string, files: Record<string, string>) => {
     const proj = { id: `proj-${Date.now()}`, name, url, files, createdAt: Date.now() };
     setProjects(prev => {
