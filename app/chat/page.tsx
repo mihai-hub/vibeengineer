@@ -90,9 +90,11 @@ function detectMode(text: string): Mode {
   const ctoKw = ['build', 'architecture', 'stack', 'tech', 'code', 'api', 'database', 'deploy', 'infrastructure', 'framework', 'backend', 'frontend', 'server', 'microservice', 'create', 'generate', 'make me'];
   const cooKw = ['grow', 'users', 'revenue', 'marketing', 'pricing', 'strategy', 'customers', 'operations', 'hire', 'launch', 'monetize', 'acquisition', 'retention', 'churn', 'gtm'];
 
-  if (hasUrl || operatorKw.some(k => lower.includes(k))) return 'operate';
-  // "build me" at start always → CTO regardless of other keywords (e.g. business data pasted in message)
-  if (/^build\b/.test(lower) || lower.includes('build me') || lower.includes('build a') || lower.includes('build an')) return 'cto';
+  // Operator mode: URL present OR operator keyword at START of message (not buried inside a build prompt)
+  const startsWithOperator = operatorKw.some(k => lower.startsWith(k));
+  if (hasUrl && !lower.includes('build') || startsWithOperator) return 'operate';
+  // "build me" anywhere always → CTO (handles long prompts with words like "click" inside)
+  if (/^build\b/.test(lower) || lower.includes('build me') || lower.includes('build a') || lower.includes('build an') || lower.includes('create a') || lower.includes('make me a')) return 'cto';
   const ctoScore = ctoKw.filter(k => lower.includes(k)).length;
   const cooScore = cooKw.filter(k => lower.includes(k)).length;
   if (cooScore > ctoScore) return 'coo';
